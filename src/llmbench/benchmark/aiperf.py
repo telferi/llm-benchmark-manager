@@ -70,7 +70,9 @@ class AIPerfRunner:
         cmd=self.build_command(model_id,cfg_path,art,profile)
         if extra_inputs:
             cmd += ['--extra-inputs',json.dumps(extra_inputs,separators=(',',':'))]
-        env=os.environ.copy(); env['LLMBENCH_PROVIDER_API_KEY']=api_key
+        blocked=('KEY','TOKEN','SECRET','PASSWORD','CREDENTIAL','AUTH')
+        env={k:v for k,v in os.environ.items() if not any(marker in k.upper() for marker in blocked)}
+        env['LLMBENCH_PROVIDER_API_KEY']=api_key
         try:
             proc=subprocess.run(cmd,env=env,text=True,capture_output=True,timeout=profile.timeout_seconds,check=False)
         except FileNotFoundError as e:

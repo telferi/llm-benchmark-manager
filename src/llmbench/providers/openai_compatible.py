@@ -20,6 +20,7 @@ class OpenAICompatibleProvider:
     def discover_models(self,api_key:str):
         try:r=self.client.get(self._v1()+'/models',headers=self._headers(api_key))
         except httpx.TimeoutException as e: raise RuntimeError('TIMEOUT: model discovery failed') from e
+        except httpx.RequestError as e: raise RuntimeError('NETWORK_ERROR: model discovery failed') from e
         if r.status_code>=400:
             kind,_=normalize_error(r.status_code,r.text); raise RuntimeError(f'{kind}: model discovery failed ({r.status_code})')
         payload=r.json(); data=payload.get('data',payload.get('models',[])); out=[]
@@ -34,6 +35,8 @@ class OpenAICompatibleProvider:
         try:r=self.client.post(self._v1()+'/chat/completions',headers=self._headers(api_key),json=payload)
         except httpx.TimeoutException:
             return SmokeResult(False,None,'TIMEOUT','request timed out',True,latency_ms=(time.perf_counter()-t)*1000)
+        except httpx.RequestError as e:
+            return SmokeResult(False,None,'NETWORK_ERROR',str(e),True,latency_ms=(time.perf_counter()-t)*1000)
         latency=(time.perf_counter()-t)*1000
         if r.status_code>=400:
             try: msg=r.json().get('error',{}).get('message',r.text)

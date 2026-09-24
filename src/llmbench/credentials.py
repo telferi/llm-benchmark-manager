@@ -12,3 +12,9 @@ def redact_mapping(value):
     if isinstance(value,dict): return {k:('<redacted>' if any(s in k.lower() for s in sensitive) else redact_mapping(v)) for k,v in value.items()}
     if isinstance(value,list): return [redact_mapping(x) for x in value]
     return value
+
+def redact_text(value, secrets=()):
+    text='' if value is None else str(value)
+    for secret in secrets:
+        if secret: text=text.replace(str(secret),'<redacted>')
+    return text

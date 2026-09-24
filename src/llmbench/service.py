@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 import re, time
 from .db import Database
 from .domain import ModelStatus, RunStatus, Provider
-from .credentials import EnvCredentialResolver
+from .credentials import EnvCredentialResolver, redact_text
 from .discovery import DiscoveryService
 from .providers.openai_compatible import OpenAICompatibleProvider
 from .benchmark.aiperf import AIPerfRunner, AIPerfUnavailable, AIPerfError
@@ -58,8 +58,8 @@ class BenchmarkService:
     def create_run(self,provider:int|str,mode='full',requested_by='cli',profile='baseline-v1',model_id:str|None=None):
         p=self.resolve_provider(provider); config={'model_id':model_id} if model_id else {}
         return self.db.create_run(p.id,mode,profile,requested_by,config=config)
-    def _record_smoke_error(self,run_id,m,result):
-        self.db.add_error(run_id,m.id,result.error_type or 'SMOKE_ERROR',result.message or '',result.status_code,1)
+    def _record_smoke_error(self,run_id,m,result,secret=None):
+        self.db.add_error(run_id,m.id,result.error_type or 'SMOKE_ERROR',redact_text(result.message or '',(secret,)),result.status_code,1)
     def _smoke_with_retry(self,adapter,model_id,key):
         prior=[]; result=adapter.smoke_test(model_id,key)
         for delay in self.retry_delays:
@@ -77,24 +77,30 @@ class BenchmarkService:
         if run.config.get('model_id'): models=[m for m in models if m.model_id==run.config['model_id']]
         for m in models:
             if cancelled(): return self.db.update_run_status(run_id,RunStatus.CANCELLED)
-            smoke,retry_failures=self._smoke_with_retry(adapter,m.model_id,key)
+            try:
+                smoke,retry_failures=self._smoke_with_retry(adapter,m.model_id,key)
+            except Exception:
+                self.db.update_run_status(run_id,RunStatus.FAILED); raise
             unstable=bool(retry_failures)
             for failure in retry_failures:
-                had_errors=True; self._record_smoke_error(run_id,m,failure)
+                had_errors=True; self._record_smoke_error(run_id,m,failure,key)
             if not smoke.ok:
-                had_errors=True; self._record_smoke_error(run_id,m,smoke)
+                had_errors=True; self._record_smoke_error(run_id,m,smoke,key)
                 status=ModelStatus.UNSTABLE if smoke.retryable else (ModelStatus.UNSUPPORTED if smoke.error_type=='UNSUPPORTED' else ModelStatus.FAILED)
                 self.db.set_model_status(m.id,status,smoke.error_type or 'smoke failure'); continue
             permanent_failure=False
             for _ in range(self.stability_checks):
                 if cancelled(): return self.db.update_run_status(run_id,RunStatus.CANCELLED)
-                check,retry_failures=self._smoke_with_retry(adapter,m.model_id,key)
+                try:
+                    check,retry_failures=self._smoke_with_retry(adapter,m.model_id,key)
+                except Exception:
+                    self.db.update_run_status(run_id,RunStatus.FAILED); raise
                 if retry_failures:
                     unstable=True
                     for failure in retry_failures:
-                        had_errors=True; self._record_smoke_error(run_id,m,failure)
+                        had_errors=True; self._record_smoke_error(run_id,m,failure,key)
                 if check.ok: continue
-                had_errors=True; self._record_smoke_error(run_id,m,check)
+                had_errors=True; self._record_smoke_error(run_id,m,check,key)
                 if check.retryable: unstable=True; continue
                 permanent_failure=True; self.db.set_model_status(m.id,ModelStatus.FAILED,check.error_type or 'stability failure'); break
             if permanent_failure: continue
@@ -102,12 +108,14 @@ class BenchmarkService:
             try:
                 out=self.benchmark_runner.run(model_id=m.model_id,base_url=p.base_url,api_key=key,profile=BASELINE_V1,artifact_dir=art)
             except (AIPerfUnavailable,AIPerfError) as e:
-                had_errors=True; self.db.add_error(run_id,m.id,type(e).__name__,str(e)); continue
+                had_errors=True; self.db.add_error(run_id,m.id,type(e).__name__,redact_text(str(e),(key,))); continue
+            except Exception:
+                self.db.update_run_status(run_id,RunStatus.FAILED); raise
             aiperf_version=out.aiperf_version or aiperf_version
             self.db.add_result(run_id,m.id,success_count=out.success_count,error_count=out.error_count,metrics=out.metrics,raw_artifact_path=out.artifact_path)
             if out.error_count: unstable=True; had_errors=True
             for err in out.errors:
-                self.db.add_error(run_id,m.id,err.get('error_type','INFERENCE_ERROR'),err.get('message',''),err.get('http_status'),err.get('count',1));
+                self.db.add_error(run_id,m.id,err.get('error_type','INFERENCE_ERROR'),redact_text(err.get('message',''),(key,)),err.get('http_status'),err.get('count',1));
                 if err.get('http_status') in RETRYABLE_HTTP: unstable=True
             self.db.set_model_status(m.id,ModelStatus.UNSTABLE if unstable else ModelStatus.ACTIVE,'benchmark complete')
         status=RunStatus.COMPLETED_WITH_ERRORS if had_errors else RunStatus.COMPLETED

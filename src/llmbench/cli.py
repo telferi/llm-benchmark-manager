@@ -39,7 +39,13 @@ def _interactive(service,jobs):
         if choice=='6': return 0
         if choice=='1':
             slug=input('Provider slug: ').strip(); name=input('Provider name: ').strip(); url=input('Endpoint URL: ').strip(); env=input('API credential ENV variable: ').strip()
-            pr=service.add_provider(slug,name,'openai-compatible',url,env); print(f'Added {pr.slug}. Credential: {"FOUND" if service.credentials.availability(env) else "MISSING"}')
+            pr=service.add_provider(slug,name,'openai-compatible',url,env); available=service.credentials.availability(env); print(f'Added {pr.slug}. Credential: {"FOUND" if available else "MISSING"}')
+            if available:
+                try:
+                    found=service.discover(pr.id); run=service.create_run(pr.id,'full'); done=service.execute_run(run.id)
+                    print(f'Discovered {len(found.seen)} models. Benchmark {run.id}: {done.status.value}')
+                except Exception as e:
+                    print(f'Automatic onboarding failed: {e}')
         elif choice=='2':
             providers=service.list_providers()
             if not providers: print('No providers configured.'); continue

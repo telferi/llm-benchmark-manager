@@ -78,3 +78,27 @@ def test_retryable_smoke_is_retried_with_backoff_and_marks_unstable(tmp_path,mon
     assert sleeps==[1,2]
     assert db.get_model(p.id,'m').status==ModelStatus.UNSTABLE
     assert len(db.get_results(run.id)['errors'])==2
+
+def test_provider_error_message_is_secret_redacted(tmp_path,monkeypatch):
+    monkeypatch.setenv('KEY','VERY-SECRET-VALUE')
+    db=Database(tmp_path/'redact.db')
+    class SecretEcho:
+        def discover_models(self,key): return [DiscoveredModel('m',{})]
+        def smoke_test(self,*a,**k): return SmokeResult(False,400,'PAYLOAD_ERROR','provider echoed VERY-SECRET-VALUE',False)
+    svc=BenchmarkService(db,adapter_factory=lambda p:SecretEcho(),benchmark_runner=FakeRunner(),artifact_root=tmp_path/'a',retry_delays=())
+    p=svc.add_provider('s','S','openai-compatible','https://x','KEY'); svc.discover(p.id)
+    run=svc.create_run(p.id,'full'); svc.execute_run(run.id)
+    msg=db.get_results(run.id)['errors'][0]['provider_message']
+    assert 'VERY-SECRET-VALUE' not in msg and '<redacted>' in msg
+
+def test_unexpected_execution_exception_marks_run_failed(tmp_path,monkeypatch):
+    import pytest
+    monkeypatch.setenv('KEY','s')
+    db=Database(tmp_path/'boom.db')
+    class Boom:
+        def discover_models(self,key): return [DiscoveredModel('m',{})]
+        def smoke_test(self,*a,**k): raise RuntimeError('boom')
+    svc=BenchmarkService(db,adapter_factory=lambda p:Boom(),benchmark_runner=FakeRunner(),artifact_root=tmp_path/'a',retry_delays=())
+    p=svc.add_provider('b','B','openai-compatible','https://x','KEY'); svc.discover(p.id); run=svc.create_run(p.id,'full')
+    with pytest.raises(RuntimeError,match='boom'): svc.execute_run(run.id)
+    assert db.get_run(run.id).status==RunStatus.FAILED

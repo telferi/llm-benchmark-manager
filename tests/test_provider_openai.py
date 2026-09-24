@@ -33,3 +33,9 @@ def test_error_normalization():
     assert normalize_error(429,"x") == ("RATE_LIMITED",True)
     assert normalize_error(503,"x") == ("OVERLOADED",True)
     assert normalize_error(400,"x")[0] == "PAYLOAD_ERROR"
+
+def test_network_error_is_retryable():
+    def handler(req): raise httpx.ConnectError('connection reset',request=req)
+    client=httpx.Client(transport=httpx.MockTransport(handler))
+    r=OpenAICompatibleProvider('https://api.example.test',client=client).smoke_test('m','k')
+    assert r.ok is False and r.error_type=='NETWORK_ERROR' and r.retryable is True

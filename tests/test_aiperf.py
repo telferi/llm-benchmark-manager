@@ -21,11 +21,13 @@ def test_command_never_contains_secret(tmp_path):
     assert 'super-secret' not in ' '.join(cmd)
     assert '${LLMBENCH_PROVIDER_API_KEY}' in Path(cfg).read_text()
 
-def test_run_passes_secret_only_in_environment(tmp_path):
+def test_run_passes_secret_only_in_environment(tmp_path,monkeypatch):
+    monkeypatch.setenv('OTHER_API_KEY','do-not-forward')
     fake=tmp_path/'aiperf'
     fake.write_text("""#!/usr/bin/env python3
 import json,os,sys,pathlib
 assert os.environ['LLMBENCH_PROVIDER_API_KEY']=='super-secret'
+assert 'OTHER_API_KEY' not in os.environ
 assert 'super-secret' not in ' '.join(sys.argv)
 a=pathlib.Path(sys.argv[sys.argv.index('--artifact-dir')+1]); a.mkdir(parents=True,exist_ok=True)
 (a/'profile_export_aiperf.json').write_text(json.dumps({'aiperf_version':'0.test','request_count':{'avg':1},'error_request_count':{'avg':0},'completed_request_count':{'avg':1},'error_summary':[]}))
