@@ -227,3 +227,19 @@ def redact_text(value, secrets=()):
         if secret:
             text = text.replace(str(secret), "<redacted>")
     return text
+
+
+def sanitize_provider_message(value, secrets=(), max_length=512):
+    """Redact secrets and provider-specific identifiers before persistence."""
+    import re
+
+    text = "" if value is None else str(value)
+    for secret in secrets:
+        if secret:
+            text = text.replace(str(secret), "<redacted>")
+    text = re.sub(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+", "<authorization>", text)
+    uuid_re = r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\b"
+    text = re.sub(uuid_re, "<uuid>", text)
+    text = re.sub(r"(?i)(account(?:_id)?\s*(?:=|:|\bis\b)?\s*)['\"]?[A-Za-z0-9_-]{20,}['\"]?", r"\1'<account_id>'", text)
+    text = re.sub(r"(?i)(for account\s+)['\"]?[^'\"\s]{20,}['\"]?", r"\1'<account_id>'", text)
+    return text[: max(0, int(max_length))]

@@ -57,3 +57,19 @@ def test_env_credentials_remain_supported(monkeypatch,tmp_path):
     monkeypatch.setenv('EXISTING_KEY','env-secret')
     manager=CredentialManager(secure_store=SecureCredentialStore(keyring_module=FailingKeyring(),fallback=EncryptedFileCredentialStore(tmp_path/'vault')))
     assert manager.resolve('EXISTING_KEY','env')=='env-secret'
+
+
+def test_provider_message_sanitization_redacts_identifiers_and_caps_length():
+    from llmbench.credentials import sanitize_provider_message
+    secret = "fake-secret"
+    uuid = "123e4567-e89b-12d3-a456-426614174000"
+    account = "I8qHm-dTzOnS-kqm-Wlmj2wpD4dMDxpuAyw9C2tY-1s"
+    text = f"Bearer token-value {secret} Function '{uuid}' not found for account '{account}' " + ("x" * 2500)
+    sanitized = sanitize_provider_message(text, secrets=(secret,))
+    assert secret not in sanitized
+    assert "Bearer" not in sanitized
+    assert uuid not in sanitized
+    assert account not in sanitized
+    assert "<uuid>" in sanitized
+    assert "<account_id>" in sanitized
+    assert len(sanitized) <= 512
