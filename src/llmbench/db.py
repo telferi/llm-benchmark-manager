@@ -96,7 +96,7 @@ class Database:
         with self._connect() as c:
             r=c.execute('SELECT status FROM models WHERE id=?',(model_db_id,)).fetchone()
             if not r: raise KeyError(model_db_id)
-            old=r['status']; success=now if status==ModelStatus.ACTIVE else None; failure=now if status in (ModelStatus.UNSTABLE,ModelStatus.FAILED,ModelStatus.UNSUPPORTED) else None
+            old=r['status']; success=now if status==ModelStatus.ACTIVE else None; failure=now if status in (ModelStatus.UNSTABLE,ModelStatus.NOT_AVAILABLE,ModelStatus.INCOMPATIBLE,ModelStatus.FAILED,ModelStatus.UNSUPPORTED) else None
             c.execute('UPDATE models SET status=?,last_success_at=COALESCE(?,last_success_at),last_failure_at=COALESCE(?,last_failure_at) WHERE id=?',(status.value,success,failure,model_db_id))
             if old!=status.value:c.execute('INSERT INTO model_status_history(model_db_id,old_status,new_status,reason,changed_at) VALUES(?,?,?,?,?)',(model_db_id,old,status.value,reason,now))
         return self.get_model_by_id(model_db_id)

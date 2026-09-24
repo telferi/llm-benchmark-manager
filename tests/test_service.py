@@ -147,3 +147,77 @@ def test_add_provider_with_secret_reuses_existing_provider_with_same_url(tmp_pat
     assert updated.credential_ref=='provider:nvidia'
     assert manager.resolve(updated.credential_ref,updated.credential_source)=='dummy-provider-key'
     assert len(db.list_providers())==1
+
+
+def test_404_model_is_not_available_without_retry_or_benchmark(tmp_path,monkeypatch):
+    from llmbench.domain import ModelCapability
+    monkeypatch.setenv('KEY','s')
+    db=Database(tmp_path/'404.db'); sleeps=[]
+    class Gone:
+        def __init__(self): self.calls=0
+        def discover_models(self,key): return [DiscoveredModel('gone-model',{})]
+        def probe(self,model_id,key,capability):
+            self.calls+=1; return SmokeResult(False,404,'MODEL_NOT_FOUND','not available for account',False)
+        def smoke_test(self,*a,**k): return self.probe(a[0],a[1],ModelCapability.UNKNOWN)
+        def benchmark_profile_for(self,capability): return 'baseline-v1' if capability is ModelCapability.CHAT_TEXT else None
+    adapter=Gone(); runner=FakeRunner()
+    svc=BenchmarkService(db,adapter_factory=lambda p:adapter,benchmark_runner=runner,artifact_root=tmp_path/'a',stability_checks=0,sleep_fn=sleeps.append)
+    p=svc.add_provider('g','G','openai-compatible','https://x','KEY'); svc.discover(p.id)
+    run=svc.create_run(p.id,'full'); svc.execute_run(run.id)
+    assert db.get_model(p.id,'gone-model').status is ModelStatus.NOT_AVAILABLE
+    assert adapter.calls == 1
+    assert sleeps == []
+    assert runner.models == []
+    row=svc.run_progress(run.id)['models'][0]
+    assert row['stage']=='DONE' and row['attempt_count']==1
+
+
+def test_capability_mismatch_is_incompatible_and_probe_hint_is_persisted(tmp_path,monkeypatch):
+    from llmbench.domain import ModelCapability
+    monkeypatch.setenv('KEY','s')
+    db=Database(tmp_path/'mismatch.db')
+    class Mismatch:
+        def __init__(self): self.calls=0
+        def discover_models(self,key): return [DiscoveredModel('vendor/model-x',{})]
+        def probe(self,model_id,key,capability):
+            self.calls+=1
+            return SmokeResult(False,400,'PAYLOAD_ERROR','Content cannot be a plain string. The model does not support text input.',False)
+        def smoke_test(self,*a,**k): return self.probe(a[0],a[1],ModelCapability.UNKNOWN)
+        def benchmark_profile_for(self,capability): return None
+    adapter=Mismatch(); svc=BenchmarkService(db,adapter_factory=lambda p:adapter,benchmark_runner=FakeRunner(),artifact_root=tmp_path/'a',stability_checks=0)
+    p=svc.add_provider('m','M','openai-compatible','https://x','KEY'); svc.discover(p.id)
+    run=svc.create_run(p.id,'full'); svc.execute_run(run.id)
+    m=db.get_model(p.id,'vendor/model-x')
+    assert m.status is ModelStatus.INCOMPATIBLE
+    assert m.capability is ModelCapability.UNKNOWN
+    assert m.capability_source == 'probe'
+    assert adapter.calls == 1
+
+
+def test_error_specific_retry_schedules_and_recovery_marks_unstable(tmp_path,monkeypatch):
+    from llmbench.domain import ModelCapability
+    cases=[
+        ('RATE_LIMITED',429,(1,2,5,10)),
+        ('OVERLOADED',503,(1,2,5,10)),
+        ('PROVIDER_ERROR',500,(1,3)),
+        ('TIMEOUT',None,(1,3)),
+    ]
+    for error_type,status_code,expected in cases:
+        monkeypatch.setenv('KEY','s')
+        db=Database(tmp_path/f'{error_type}.db'); sleeps=[]
+        class Recover:
+            def __init__(self): self.calls=0
+            def discover_models(self,key): return [DiscoveredModel('model',{'task':'text-generation'})]
+            def probe(self,model_id,key,capability):
+                self.calls+=1
+                if self.calls <= len(expected): return SmokeResult(False,status_code,error_type,'temporary',True)
+                return SmokeResult(True,200,content='ok')
+            def smoke_test(self,*a,**k): return self.probe(a[0],a[1],ModelCapability.CHAT_TEXT)
+            def benchmark_profile_for(self,capability): return 'baseline-v1'
+        adapter=Recover(); runner=FakeRunner()
+        svc=BenchmarkService(db,adapter_factory=lambda p:adapter,benchmark_runner=runner,artifact_root=tmp_path/error_type,stability_checks=0,sleep_fn=sleeps.append)
+        p=svc.add_provider(error_type.lower(),error_type,'openai-compatible','https://x','KEY'); svc.discover(p.id)
+        run=svc.create_run(p.id,'full'); svc.execute_run(run.id)
+        assert tuple(sleeps)==expected
+        assert db.get_model(p.id,'model').status is ModelStatus.UNSTABLE
+        assert adapter.calls==len(expected)+1
