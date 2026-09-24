@@ -1,5 +1,5 @@
 from __future__ import annotations
-import argparse, json, re
+import argparse, json, re, getpass
 from dataclasses import asdict
 from .runtime import build_runtime
 from .export import export_run
@@ -38,7 +38,7 @@ def _prompt_env_name() -> str:
 def _provider_lines(service):
     lines=[]
     for x in service.list_providers():
-        available=service.credentials.availability(x.credential_ref)
+        available=service.credentials.availability(x.credential_ref,x.credential_source)
         lines.append(f'{x.id}. {x.slug} — {x.name} [{x.credential_ref}: {"FOUND" if available else "MISSING"}]')
     return lines
 
@@ -54,8 +54,13 @@ def _interactive(service,jobs):
         choice=input('Choice: ').strip()
         if choice=='6': return 0
         if choice=='1':
-            slug=input('Provider slug: ').strip(); name=input('Provider name: ').strip(); url=input('Endpoint URL: ').strip(); env=_prompt_env_name()
-            pr=service.add_provider(slug,name,'openai-compatible',url,env); available=service.credentials.availability(env); print(f'Added {pr.slug}. Credential: {"FOUND" if available else "MISSING"}')
+            url=input('Endpoint URL: ').strip(); api_key=getpass.getpass('API key: ')
+            try:
+                pr=service.add_provider_with_secret(url,api_key)
+            except Exception as e:
+                print(f'Provider could not be added: {e}'); continue
+            available=service.credentials.availability(pr.credential_ref,pr.credential_source)
+            print(f'Added {pr.slug}. Credential: {"STORED" if available else "MISSING"} ({pr.credential_source})')
             if available:
                 try:
                     found=service.discover(pr.id); run=service.create_run(pr.id,'full'); done=service.execute_run(run.id)
@@ -88,7 +93,7 @@ def _interactive(service,jobs):
                 run=service.create_run(pr.id,'full'); done=service.execute_run(run.id); print(f'{pr.slug}: {done.status.value}')
         elif choice=='4':
             rid=input('Run id: ').strip(); print(json.dumps(service.results(rid),indent=2,default=str))
-        elif choice=='5': print('Data and credentials are configured through CLI options and environment variables.')
+        elif choice=='5': print('Interactive provider keys use the OS keyring when available, with encrypted local fallback. ENV credentials remain supported for automation.')
 
 def main(argv=None,service=None,jobs=None):
     parser=build_parser(); args=parser.parse_args(argv)

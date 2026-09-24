@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 import re, time
 from .db import Database
 from .domain import ModelStatus, RunStatus, Provider
-from .credentials import EnvCredentialResolver, redact_text
+from .credentials import CredentialManager, redact_text
 from .discovery import DiscoveryService
 from .providers.openai_compatible import OpenAICompatibleProvider
 from .benchmark.aiperf import AIPerfRunner, AIPerfUnavailable, AIPerfError
@@ -21,7 +21,7 @@ def _safe_component(value:str)->str:
 
 class BenchmarkService:
     def __init__(self,db:Database,credential_resolver=None,adapter_factory=None,benchmark_runner=None,artifact_root=None,stability_checks:int=3,retry_delays=(1,2,5,10),sleep_fn=None):
-        self.db=db; self.credentials=credential_resolver or EnvCredentialResolver()
+        self.db=db; self.credentials=credential_resolver or CredentialManager()
         self.adapter_factory=adapter_factory or self._default_adapter
         self.benchmark_runner=benchmark_runner or AIPerfRunner()
         self.artifact_root=Path(artifact_root or Path.home()/'.local/share/llmbench/artifacts')
@@ -32,16 +32,50 @@ class BenchmarkService:
     def resolve_provider(self,value:int|str):
         if isinstance(value,int) or (isinstance(value,str) and value.isdigit()): return self.db.get_provider(int(value))
         return self.db.get_provider_by_slug(str(value))
+    def _validated_url(self,base_url:str):
+        u=urlparse(base_url)
+        if u.scheme not in ('http','https') or not u.netloc or u.username or u.password:
+            raise ValueError('provider URL must be http(s) and must not embed credentials')
+        return u
+    def _identity_from_url(self,base_url:str):
+        u=self._validated_url(base_url); host=(u.hostname or '').lower()
+        labels=[x for x in host.split('.') if x]
+        generic={'www','api','integrate','gateway','cloud','v1','com','net','org','io','ai','co','uk','dev'}
+        candidates=[x for x in labels if x not in generic and not x.isdigit()]
+        base=(candidates[-1] if candidates else (labels[0] if labels else 'provider'))
+        slug=re.sub(r'[^a-z0-9]+','-',base.lower()).strip('-') or 'provider'
+        existing={p.slug for p in self.db.list_providers()}; unique=slug; n=2
+        while unique in existing:
+            unique=f'{slug}-{n}'; n+=1
+        return unique, base.replace('-',' ').title()
     def add_provider(self,slug,name,provider_type,base_url,credential_env):
         if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', credential_env or ''): raise ValueError('invalid credential ENV variable name')
-        u=urlparse(base_url)
-        if u.scheme not in ('http','https') or not u.netloc or u.username or u.password: raise ValueError('provider URL must be http(s) and must not embed credentials')
+        self._validated_url(base_url)
         return self.db.add_provider(slug,name,provider_type,base_url,'env',credential_env)
+    def add_provider_with_secret(self,base_url,api_key,provider_type='openai-compatible'):
+        if not api_key: raise ValueError('API key cannot be empty')
+        self._validated_url(base_url); normalized=base_url.rstrip('/')
+        existing=next((p for p in self.db.list_providers() if p.base_url.rstrip('/')==normalized),None)
+        if existing is not None:
+            ref=f'provider:{existing.slug}'
+            source,stored_ref=self.credentials.store(ref,api_key)
+            try:
+                return self.db.update_provider_credential(existing.id,source,stored_ref)
+            except Exception:
+                self.credentials.delete(source,stored_ref)
+                raise
+        slug,name=self._identity_from_url(normalized); ref=f'provider:{slug}'
+        source,stored_ref=self.credentials.store(ref,api_key)
+        try:
+            return self.db.add_provider(slug,name,provider_type,normalized,source,stored_ref)
+        except Exception:
+            self.credentials.delete(source,stored_ref)
+            raise
     def list_providers(self): return self.db.list_providers()
     def provider_view(self,p:Provider):
-        d=asdict(p); d['credential_available']=self.credentials.availability(p.credential_ref); return d
+        d=asdict(p); d['credential_available']=self.credentials.availability(p.credential_ref,p.credential_source); return d
     def discover(self,provider:int|str):
-        p=self.resolve_provider(provider); key=self.credentials.resolve(p.credential_ref); adapter=self.adapter_factory(p)
+        p=self.resolve_provider(provider); key=self.credentials.resolve(p.credential_ref,p.credential_source); adapter=self.adapter_factory(p)
         discovered=adapter.discover_models(key); result=self.discovery_service.reconcile(p.id,[x.model_id for x in discovered])
         for d in discovered:
             current=self.db.get_model(p.id,d.model_id); self.db.upsert_model(p.id,d.model_id,current.status,d.metadata)
@@ -69,7 +103,7 @@ class BenchmarkService:
     def execute_run(self,run_id:str,cancel_check:Callable[[],bool]|None=None):
         cancelled=cancel_check or (lambda:False); run=self.db.get_run(run_id); p=self.db.get_provider(run.provider_id)
         self.db.update_run_status(run_id,RunStatus.RUNNING)
-        try: key=self.credentials.resolve(p.credential_ref); adapter=self.adapter_factory(p)
+        try: key=self.credentials.resolve(p.credential_ref,p.credential_source); adapter=self.adapter_factory(p)
         except Exception:
             self.db.update_run_status(run_id,RunStatus.FAILED); raise
         had_errors=False; aiperf_version=None

@@ -102,3 +102,48 @@ def test_unexpected_execution_exception_marks_run_failed(tmp_path,monkeypatch):
     p=svc.add_provider('b','B','openai-compatible','https://x','KEY'); svc.discover(p.id); run=svc.create_run(p.id,'full')
     with pytest.raises(RuntimeError,match='boom'): svc.execute_run(run.id)
     assert db.get_run(run.id).status==RunStatus.FAILED
+
+def test_add_provider_with_secret_derives_identity_and_never_stores_raw_secret(tmp_path):
+    from llmbench.credentials import CredentialManager, SecureCredentialStore, EncryptedFileCredentialStore
+    class FailingKeyring:
+        class Backend: priority=0
+        def get_keyring(self): return self.Backend()
+    db=Database(tmp_path/'secure.db')
+    manager=CredentialManager(secure_store=SecureCredentialStore(keyring_module=FailingKeyring(),fallback=EncryptedFileCredentialStore(tmp_path/'vault')))
+    svc=BenchmarkService(db,credential_resolver=manager,artifact_root=tmp_path/'artifacts')
+    p=svc.add_provider_with_secret('https://integrate.api.nvidia.com','dummy-provider-key')
+    assert p.slug=='nvidia'
+    assert p.name=='Nvidia'
+    assert p.credential_source=='encrypted-file'
+    assert p.credential_ref=='provider:nvidia'
+    assert manager.resolve(p.credential_ref,p.credential_source)=='dummy-provider-key'
+    assert 'dummy-provider-key' not in db.path.read_bytes().decode('latin1')
+
+def test_add_provider_with_secret_makes_duplicate_slug_unique(tmp_path):
+    from llmbench.credentials import CredentialManager, SecureCredentialStore, EncryptedFileCredentialStore
+    class FailingKeyring:
+        class Backend: priority=0
+        def get_keyring(self): return self.Backend()
+    db=Database(tmp_path/'dupe.db')
+    manager=CredentialManager(secure_store=SecureCredentialStore(keyring_module=FailingKeyring(),fallback=EncryptedFileCredentialStore(tmp_path/'vault')))
+    svc=BenchmarkService(db,credential_resolver=manager)
+    a=svc.add_provider_with_secret('https://api.nvidia.com','one')
+    b=svc.add_provider_with_secret('https://integrate.api.nvidia.com','two')
+    assert a.slug=='nvidia' and b.slug=='nvidia-2'
+
+def test_add_provider_with_secret_reuses_existing_provider_with_same_url(tmp_path):
+    from llmbench.credentials import CredentialManager, SecureCredentialStore, EncryptedFileCredentialStore
+    class FailingKeyring:
+        class Backend: priority=0
+        def get_keyring(self): return self.Backend()
+    db=Database(tmp_path/'reuse.db')
+    existing=db.add_provider('nvidia','NVIDIA','openai-compatible','https://integrate.api.nvidia.com','env','NVIDIA_API_KEY')
+    manager=CredentialManager(secure_store=SecureCredentialStore(keyring_module=FailingKeyring(),fallback=EncryptedFileCredentialStore(tmp_path/'vault')))
+    svc=BenchmarkService(db,credential_resolver=manager)
+    updated=svc.add_provider_with_secret('https://integrate.api.nvidia.com/','dummy-provider-key')
+    assert updated.id==existing.id
+    assert updated.slug=='nvidia'
+    assert updated.credential_source=='encrypted-file'
+    assert updated.credential_ref=='provider:nvidia'
+    assert manager.resolve(updated.credential_ref,updated.credential_source)=='dummy-provider-key'
+    assert len(db.list_providers())==1

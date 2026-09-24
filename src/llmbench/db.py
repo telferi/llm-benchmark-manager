@@ -39,6 +39,11 @@ class Database:
     def list_providers(self):
         with self._connect() as c: rows=c.execute('SELECT * FROM providers ORDER BY id').fetchall()
         return [self._provider(r) for r in rows]
+    def update_provider_credential(self,provider_id:int,credential_source:str,credential_ref:str):
+        now=utcnow()
+        with self._connect() as c:
+            c.execute('UPDATE providers SET credential_source=?,credential_ref=?,updated_at=? WHERE id=?',(credential_source,credential_ref,now,provider_id))
+        return self.get_provider(provider_id)
     def touch_discovery(self,provider_id:int):
         now=utcnow()
         with self._connect() as c:c.execute('UPDATE providers SET last_discovery_at=?,updated_at=? WHERE id=?',(now,now,provider_id))

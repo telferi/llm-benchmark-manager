@@ -16,6 +16,9 @@ dependencies = [
   "uvicorn>=0.35,<1",
   "fastmcp>=4,<5",
   "PyYAML>=6,<7",
+  "keyring>=25,<26",
+  "cryptography>=45,<51",
+  "platformdirs>=4,<5",
 ]
 
 [project.optional-dependencies]

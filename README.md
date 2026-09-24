@@ -41,9 +41,19 @@ pip install -e .
 
 ## Credentials
 
-Raw provider API keys are not stored by LLM Benchmark Manager. Provider configuration stores only the environment-variable name.
+Interactive onboarding is intentionally simple: the user enters only the provider endpoint URL and the API key. The provider name/slug is derived automatically from the endpoint hostname. If the same endpoint already exists (for example from an earlier ENV-based setup), the existing provider is reused and its credential binding is upgraded instead of creating a duplicate.
 
-Example:
+```text
+New provider
+Endpoint URL: https://integrate.api.nvidia.com
+API key: ***************
+```
+
+The raw API key is never written to SQLite. LLM Benchmark Manager first tries the operating system keyring (macOS Keychain, Windows Credential Manager, or an available Linux Secret Service backend). On headless systems where no secure OS keyring backend is available, it falls back to an encrypted local vault protected by mode-0600 files inside the application data directory.
+
+The encrypted-file fallback keeps a local master key under the same OS user account, so operating-system account isolation remains part of the trust boundary. It is intended to prevent plaintext secrets from appearing in the database, reports, logs, artifacts, or ordinary configuration files.
+
+Environment-variable credentials remain supported for automation, containers, systemd and existing Hermes-style deployments:
 
 ```bash
 export NVIDIA_API_KEY='...'
@@ -55,9 +65,7 @@ llmbench provider add \
   --credential-env NVIDIA_API_KEY
 ```
 
-The manager records `NVIDIA_API_KEY`, not its value. The raw value is resolved only when a request is issued or an AIPerf child process is started. AIPerf receives it through its child environment, not as a command-line argument.
-
-An environment file used by systemd, Docker, or another supervisor may itself be plaintext; protecting that file remains the operator's responsibility.
+In ENV mode the manager stores only the variable name. In all modes, AIPerf receives the provider key through its child environment, never as a command-line argument.
 
 ## Interactive use
 
@@ -67,7 +75,7 @@ Run with no arguments:
 llmbench
 ```
 
-The main menu offers new-provider setup, selection of an existing provider, all-provider retesting, previous results, and settings/help.
+The main menu offers new-provider setup, selection of an existing provider, all-provider retesting, previous results, and settings/help. New-provider setup asks only for endpoint URL and a hidden API key; provider identity is derived automatically.
 
 For an existing provider the interactive workflow supports full retest, ACTIVE-only retest, UNSTABLE/FAILED retest, refresh + NEW-only test, single-model test, and model listing.
 
@@ -156,7 +164,7 @@ Override it with:
 export LLMBENCH_DATA_DIR=/srv/llmbench
 ```
 
-Contents include the SQLite database and AIPerf artifact directories. Benchmark history is append-only across reruns.
+Contents include the SQLite database, AIPerf artifact directories, and (when OS keyring is unavailable) the encrypted credential vault. Benchmark history is append-only across reruns.
 
 ## Docker
 
@@ -180,7 +188,7 @@ The Docker image installs AIPerf 0.12.0 and stores application data under `/data
 
 ## Security model
 
-The application is designed so raw credentials do not enter SQLite, normal logs, REST responses, MCP responses, benchmark JSON records, or process arguments. Provider URLs are restricted to HTTP(S) and may not embed username/password credentials.
+The application is designed so raw credentials do not enter SQLite, normal logs, REST responses, MCP responses, benchmark JSON records, or process arguments. Interactive secrets are stored in the OS keyring when available, with an encrypted local fallback for headless systems; ENV references remain available for automation. Provider URLs are restricted to HTTP(S) and may not embed username/password credentials.
 
 The REST API has no built-in multi-user authentication in v0.1.0. Its default CLI bind address is loopback. Use a trusted reverse proxy, network policy, or equivalent control before exposing it remotely.
 

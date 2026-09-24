@@ -26,7 +26,7 @@ The first adapter is `OpenAICompatibleProvider`. It normalizes base URLs and dis
 Discovery -> endpoint/auth check -> single-request smoke -> small stability test -> AIPerf baseline -> classification -> database. Expensive benchmark stages only run for models that pass earlier stages. Retryable failures use bounded exponential backoff (default 1s, 2s, 5s, 10s).
 
 ## Credential model
-Provider records store `credential_source=env` and `credential_ref=<ENV_NAME>`, never a raw value. Runtime resolution reads the environment only when issuing a request or spawning the benchmark worker. API/MCP may expose whether a credential is available but not its value. Future credential adapters may include Docker secrets, systemd credentials, Vault, cloud secret managers, and runtime prompts.
+Interactive provider onboarding asks only for endpoint URL and a hidden API key. Provider name/slug is derived automatically from the endpoint hostname. The raw key is never written to SQLite. The credential layer first attempts an operating-system keyring and falls back on headless systems to a Fernet-encrypted local vault whose files are protected with user-only permissions. Provider records persist only `credential_source` plus an opaque `credential_ref`. Environment-variable references remain supported for automation, containers, systemd and agent deployments. API/MCP may expose whether a credential is available but never its raw value.
 
 ## Persistence
 SQLite tables: providers, models, benchmark_runs, benchmark_results, errors, model_status_history. Runs have statuses `QUEUED`, `RUNNING`, `COMPLETED`, `COMPLETED_WITH_ERRORS`, `FAILED`, `CANCELLED`. Store AIPerf version, profile version, effective parameters, normalized metrics, errors, timestamps and artifact paths.
@@ -35,7 +35,7 @@ SQLite tables: providers, models, benchmark_runs, benchmark_results, errors, mod
 Versioned profiles include `baseline-v1`, `stability-v1`, `throughput-v1`, and later `reasoning-v1`. Provider/model overrides are explicit and persisted with the result.
 
 ## CLI
-Commands include provider add/list/discover, run provider (`full`, `new`, `active`, `unstable`), run all, model test/history, results, `serve`, and `mcp`. Interactive mode is the default when no subcommand is supplied.
+Commands include provider add/list/discover, run provider (`full`, `new`, `active`, `unstable`), run all, model test/history, results, `serve`, and `mcp`. Interactive mode is the default when no subcommand is supplied. Interactive new-provider onboarding asks only for endpoint URL and hidden API key; the explicit `provider add --credential-env ...` form remains available for automation.
 
 ## REST API
 Prefix `/api/v1`. Minimum endpoints: providers list/create/get, provider discovery/models, runs create/get/cancel/results, model get/history. Long-running runs return a `run_id` and execute through a local job manager in v1; Redis/Celery are not required.
