@@ -3,7 +3,7 @@ from pathlib import Path
 from dataclasses import asdict
 from typing import Callable
 from urllib.parse import urlparse
-import re
+import re, time
 from .db import Database
 from .domain import ModelStatus, RunStatus, Provider
 from .credentials import EnvCredentialResolver
@@ -20,12 +20,12 @@ def _safe_component(value:str)->str:
     return out[:180] or 'model'
 
 class BenchmarkService:
-    def __init__(self,db:Database,credential_resolver=None,adapter_factory=None,benchmark_runner=None,artifact_root=None,stability_checks:int=3):
+    def __init__(self,db:Database,credential_resolver=None,adapter_factory=None,benchmark_runner=None,artifact_root=None,stability_checks:int=3,retry_delays=(1,2,5,10),sleep_fn=None):
         self.db=db; self.credentials=credential_resolver or EnvCredentialResolver()
         self.adapter_factory=adapter_factory or self._default_adapter
         self.benchmark_runner=benchmark_runner or AIPerfRunner()
         self.artifact_root=Path(artifact_root or Path.home()/'.local/share/llmbench/artifacts')
-        self.stability_checks=max(0,int(stability_checks)); self.discovery_service=DiscoveryService(db)
+        self.stability_checks=max(0,int(stability_checks)); self.retry_delays=tuple(retry_delays); self.sleep_fn=sleep_fn or time.sleep; self.discovery_service=DiscoveryService(db)
     def _default_adapter(self,p:Provider):
         if p.provider_type not in ('openai-compatible','openai_compatible','openai'): raise ValueError(f'unsupported provider type: {p.provider_type}')
         return OpenAICompatibleProvider(p.base_url)
@@ -60,6 +60,12 @@ class BenchmarkService:
         return self.db.create_run(p.id,mode,profile,requested_by,config=config)
     def _record_smoke_error(self,run_id,m,result):
         self.db.add_error(run_id,m.id,result.error_type or 'SMOKE_ERROR',result.message or '',result.status_code,1)
+    def _smoke_with_retry(self,adapter,model_id,key):
+        prior=[]; result=adapter.smoke_test(model_id,key)
+        for delay in self.retry_delays:
+            if result.ok or not result.retryable: break
+            prior.append(result); self.sleep_fn(delay); result=adapter.smoke_test(model_id,key)
+        return result,prior
     def execute_run(self,run_id:str,cancel_check:Callable[[],bool]|None=None):
         cancelled=cancel_check or (lambda:False); run=self.db.get_run(run_id); p=self.db.get_provider(run.provider_id)
         self.db.update_run_status(run_id,RunStatus.RUNNING)
@@ -71,15 +77,22 @@ class BenchmarkService:
         if run.config.get('model_id'): models=[m for m in models if m.model_id==run.config['model_id']]
         for m in models:
             if cancelled(): return self.db.update_run_status(run_id,RunStatus.CANCELLED)
-            smoke=adapter.smoke_test(m.model_id,key)
+            smoke,retry_failures=self._smoke_with_retry(adapter,m.model_id,key)
+            unstable=bool(retry_failures)
+            for failure in retry_failures:
+                had_errors=True; self._record_smoke_error(run_id,m,failure)
             if not smoke.ok:
                 had_errors=True; self._record_smoke_error(run_id,m,smoke)
                 status=ModelStatus.UNSTABLE if smoke.retryable else (ModelStatus.UNSUPPORTED if smoke.error_type=='UNSUPPORTED' else ModelStatus.FAILED)
                 self.db.set_model_status(m.id,status,smoke.error_type or 'smoke failure'); continue
-            unstable=False; permanent_failure=False
+            permanent_failure=False
             for _ in range(self.stability_checks):
                 if cancelled(): return self.db.update_run_status(run_id,RunStatus.CANCELLED)
-                check=adapter.smoke_test(m.model_id,key)
+                check,retry_failures=self._smoke_with_retry(adapter,m.model_id,key)
+                if retry_failures:
+                    unstable=True
+                    for failure in retry_failures:
+                        had_errors=True; self._record_smoke_error(run_id,m,failure)
                 if check.ok: continue
                 had_errors=True; self._record_smoke_error(run_id,m,check)
                 if check.retryable: unstable=True; continue

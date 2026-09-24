@@ -21,7 +21,7 @@ class FakeRunner:
 def make_service(tmp_path,monkeypatch):
     monkeypatch.setenv('KEY','server-local-secret')
     db=Database(tmp_path/'db.sqlite3'); adapter=FakeAdapter(); runner=FakeRunner()
-    svc=BenchmarkService(db,adapter_factory=lambda p:adapter,benchmark_runner=runner,artifact_root=tmp_path/'artifacts',stability_checks=2)
+    svc=BenchmarkService(db,adapter_factory=lambda p:adapter,benchmark_runner=runner,artifact_root=tmp_path/'artifacts',stability_checks=2,retry_delays=())
     p=svc.add_provider('p','Provider','openai-compatible','https://example.test','KEY')
     svc.discover(p.id)
     return svc,db,adapter,runner,p
@@ -59,3 +59,22 @@ def test_single_model_run_filters_other_models(tmp_path,monkeypatch):
     run=svc.create_run(p.id,'full',requested_by='test',model_id='good')
     svc.execute_run(run.id)
     assert runner.models==['good']
+
+def test_retryable_smoke_is_retried_with_backoff_and_marks_unstable(tmp_path,monkeypatch):
+    monkeypatch.setenv('KEY','s')
+    db=Database(tmp_path/'retry.db')
+    class Recover:
+        def __init__(self): self.n=0
+        def discover_models(self,key): return [DiscoveredModel('m',{})]
+        def smoke_test(self,*a,**k):
+            self.n+=1
+            if self.n<3: return SmokeResult(False,503,'OVERLOADED','busy',True)
+            return SmokeResult(True,200,content='ok')
+    adapter=Recover(); runner=FakeRunner(); sleeps=[]
+    svc=BenchmarkService(db,adapter_factory=lambda p:adapter,benchmark_runner=runner,artifact_root=tmp_path/'a',stability_checks=0,retry_delays=(1,2,5,10),sleep_fn=sleeps.append)
+    p=svc.add_provider('r','R','openai-compatible','https://x','KEY'); svc.discover(p.id)
+    run=svc.create_run(p.id,'full'); svc.execute_run(run.id)
+    assert adapter.n==3
+    assert sleeps==[1,2]
+    assert db.get_model(p.id,'m').status==ModelStatus.UNSTABLE
+    assert len(db.get_results(run.id)['errors'])==2
