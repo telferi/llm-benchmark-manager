@@ -96,33 +96,55 @@ llmbench export RUN_ID --format json --output run.json
 llmbench export RUN_ID --format csv --output run.csv
 ```
 
-## Model lifecycle
+## Model lifecycle and capabilities
 
-Models are retained historically rather than deleted on failure. States are:
+Models are retained historically rather than deleted when a run cannot use them. v0.2 distinguishes model health from provider/account availability and from request-shape compatibility.
 
-- `NEW`
-- `ACTIVE`
-- `UNSTABLE`
-- `FAILED`
-- `UNSUPPORTED`
-- `DISABLED`
-- `MISSING`
+States are:
 
-Transient provider failures such as 429, 500, 502, 503, 504 and timeouts are treated as retryable/provider instability rather than proof that a model is permanently bad.
+- `NEW` — discovered but not yet evaluated;
+- `ACTIVE` — passed the appropriate supported probe and, where a matching profile exists, benchmark;
+- `UNSTABLE` — usable, but transient failures or partial benchmark errors were observed;
+- `NOT_AVAILABLE` — present in discovery but not callable with the current provider/account/endpoint. Invocation HTTP 404 belongs here and is not treated as proof that the model itself is broken;
+- `INCOMPATIBLE` — the attempted generic request shape does not match the model capability, for example text input sent to a non-text model;
+- `UNSUPPORTED` — capability is known but this release has no safe generic probe/benchmark path for it;
+- `FAILED` — a definitive non-transient failure occurred on the correct supported capability path;
+- `DISABLED` — manually excluded;
+- `MISSING` — previously known but no longer returned by discovery.
+
+Capabilities are persisted separately from status: `CHAT_TEXT`, `EMBEDDING`, `VISION`, `MULTIMODAL`, `PARSER`, `TRANSLATION`, `SAFETY`, `RERANK`, `SPECIAL`, and `UNKNOWN`. Detection prefers provider metadata, then conservative model-name hints, then probe feedback. Capability inference never by itself marks a model failed.
+
+Transient 429/503 errors use bounded 1/2/5/10 second retries. 500/502/504 and timeout/network errors use bounded 1/3 second retries. Deterministic 4xx capability/auth/availability errors are not retried with the same request. A model that succeeds only after retry is `UNSTABLE`.
 
 ## Test pipeline
 
-The normal full pipeline is:
+A v0.2 full run is capability-aware:
 
 1. model discovery;
-2. authentication/endpoint use;
-3. one-request smoke test;
-4. small stability check;
-5. AIPerf baseline benchmark;
-6. status classification;
-7. append-only persistence of run, metrics and errors.
+2. capability detection and persistence;
+3. capability-specific smoke probe;
+4. bounded stability checks;
+5. capability/profile eligibility decision;
+6. AIPerf only when a compatible profile exists;
+7. final status plus append-only metrics/errors/history.
 
-The `baseline-v1` profile uses ISL 128, OSL 128, 10 requests and concurrency 1.
+`CHAT_TEXT` is eligible for the existing AIPerf `baseline-v1` profile (ISL 128, OSL 128, 10 requests, concurrency 1). `EMBEDDING` uses `/v1/embeddings` for probe validation and is not sent through the text-generation AIPerf baseline. Other specialized capabilities are retained as `UNSUPPORTED` unless an explicit safe adapter/profile exists.
+
+Valid OpenAI-compatible text responses may be read from ordinary `message.content`, structured text content, reasoning-content variants, `choices[].text`, or supported output-text variants. Usage-only/empty responses are not counted as success.
+
+## Live progress
+
+Every selected model gets a persisted `run_model_progress` row before execution. The progress denominator is therefore the number of models selected for the run; `processed` means rows that reached `DONE`, not the number of models with AIPerf result rows.
+
+Interactive CLI runs print stage transitions such as:
+
+```text
+[37/82] 45.1%  nvidia/model-id
+Capability: CHAT_TEXT
+Smoke: RUNNING
+```
+
+The final CLI summary reports `ACTIVE`, `UNSTABLE`, `NOT_AVAILABLE`, `INCOMPATIBLE`, `UNSUPPORTED`, `FAILED`, and the exact total processed.
 
 ## REST API
 
@@ -134,7 +156,7 @@ llmbench serve --host 127.0.0.1 --port 8765
 
 API prefix: `/api/v1`.
 
-Key resources include providers, provider model discovery, benchmark runs, results and model history. A run request returns a `run_id`; long-running work is handled by the local job manager.
+Key resources include providers, provider model discovery, benchmark runs, results, model history, and persisted live progress. A run request returns a `run_id`; long-running work is handled by the local job manager. Read exact progress with `GET /api/v1/runs/{run_id}/progress`.
 
 Bind to a non-loopback address only behind an authentication/network-control layer appropriate for your environment.
 
@@ -146,7 +168,7 @@ Start an MCP stdio server:
 llmbench mcp
 ```
 
-The MCP surface exposes safe provider/model/run tools including discovery, run start/status/cancel/results, unstable retest and NEW-model testing. There is deliberately no raw-secret read tool.
+The MCP surface exposes safe provider/model/run tools including discovery, run start/status/progress/cancel/results, unstable retest and NEW-model testing. `benchmark_run_progress` returns the same persisted progress summary as REST. There is deliberately no raw-secret read tool.
 
 Hermes and other agents should call this MCP/API surface instead of gaining direct access to provider credentials.
 
@@ -188,9 +210,9 @@ The Docker image installs AIPerf 0.12.0 and stores application data under `/data
 
 ## Security model
 
-The application is designed so raw credentials do not enter SQLite, normal logs, REST responses, MCP responses, benchmark JSON records, or process arguments. Interactive secrets are stored in the OS keyring when available, with an encrypted local fallback for headless systems; ENV references remain available for automation. Provider URLs are restricted to HTTP(S) and may not embed username/password credentials.
+The application is designed so raw credentials do not enter SQLite, normal logs, REST responses, MCP responses, benchmark JSON records, or process arguments. Provider error text is sanitized before persistence: active credentials and bearer tokens are redacted, UUID-like request/function identifiers and account-like identifiers are replaced with placeholders, and stored messages are length-capped while preserving the semantic error class. Interactive secrets are stored in the OS keyring when available, with an encrypted local fallback for headless systems; ENV references remain available for automation. Provider URLs are restricted to HTTP(S) and may not embed username/password credentials.
 
-The REST API has no built-in multi-user authentication in v0.1.0. Its default CLI bind address is loopback. Use a trusted reverse proxy, network policy, or equivalent control before exposing it remotely.
+The REST API has no built-in multi-user authentication in v0.2.0. Its default CLI bind address is loopback. Use a trusted reverse proxy, network policy, or equivalent control before exposing it remotely.
 
 ## Development
 

@@ -63,7 +63,7 @@ def test_provider_message_sanitization_redacts_identifiers_and_caps_length():
     from llmbench.credentials import sanitize_provider_message
     secret = "fake-secret"
     uuid = "123e4567-e89b-12d3-a456-426614174000"
-    account = "I8qHm-dTzOnS-kqm-Wlmj2wpD4dMDxpuAyw9C2tY-1s"
+    account = "TESTACCOUNT-0123456789-abcdefghijklmnopqrstuv"
     text = f"Bearer token-value {secret} Function '{uuid}' not found for account '{account}' " + ("x" * 2500)
     sanitized = sanitize_provider_message(text, secrets=(secret,))
     assert secret not in sanitized

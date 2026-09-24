@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llm-benchmark-manager"
-version = "0.1.0"
+version = "0.2.0"
 description = "Provider-agnostic LLM discovery, stability testing and AIPerf benchmarking"
 readme = "README.md"
 license = "MIT"
