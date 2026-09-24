@@ -1,5 +1,7 @@
 from __future__ import annotations
 import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import httpx
 from ..domain import DiscoveredModel, SmokeResult, ModelCapability
 from ..classification import classify_http_error
@@ -9,6 +11,23 @@ from ..response_extract import extract_text_response
 def normalize_error(status_code: int | None, message: str = ""):
     c = classify_http_error(status_code, message)
     return c.error_type, c.retryable
+
+
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    raw = response.headers.get("Retry-After")
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+        return value if value >= 0 else None
+    except ValueError:
+        try:
+            when = parsedate_to_datetime(raw)
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=timezone.utc)
+            return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            return None
 
 
 class OpenAICompatibleProvider:
@@ -75,7 +94,7 @@ class OpenAICompatibleProvider:
         if r.status_code >= 400:
             msg = self._error_message(r)
             c = classify_http_error(r.status_code, msg)
-            return SmokeResult(False, r.status_code, c.error_type, msg, c.retryable, latency_ms=latency)
+            return SmokeResult(False, r.status_code, c.error_type, msg, c.retryable, latency_ms=latency, retry_after_seconds=_retry_after_seconds(r))
         try:
             body = r.json()
         except Exception as e:
@@ -97,7 +116,7 @@ class OpenAICompatibleProvider:
         if r.status_code >= 400:
             msg = self._error_message(r)
             c = classify_http_error(r.status_code, msg)
-            return SmokeResult(False, r.status_code, c.error_type, msg, c.retryable, latency_ms=latency)
+            return SmokeResult(False, r.status_code, c.error_type, msg, c.retryable, latency_ms=latency, retry_after_seconds=_retry_after_seconds(r))
         try:
             body = r.json()
             data = body.get('data', []) if isinstance(body, dict) else []

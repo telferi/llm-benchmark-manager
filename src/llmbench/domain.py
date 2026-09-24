@@ -97,3 +97,4 @@ class SmokeResult:
     retryable: bool = False
     content: str | None = None
     latency_ms: float | None = None
+    retry_after_seconds: float | None = None

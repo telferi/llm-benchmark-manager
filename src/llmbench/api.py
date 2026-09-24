@@ -4,6 +4,7 @@ from enum import Enum
 from typing import Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
+from . import __version__
 
 class ProviderCreate(BaseModel):
     slug:str=Field(min_length=1,pattern=r'^[A-Za-z0-9._-]+$')
@@ -23,7 +24,7 @@ def _jsonable(v:Any):
     return v
 
 def create_app(service,jobs):
-    app=FastAPI(title='LLM Benchmark Manager',version='0.1.0')
+    app=FastAPI(title='LLM Benchmark Manager',version=__version__)
     @app.get('/api/v1/providers')
     def providers(): return [_jsonable(service.provider_view(p)) for p in service.list_providers()]
     @app.post('/api/v1/providers',status_code=201)

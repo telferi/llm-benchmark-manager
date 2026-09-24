@@ -70,3 +70,28 @@ def test_progress_denominator_is_selected_models_and_callbacks_show_stage_order(
         assert 'SMOKE' in per_model[model_id]
         assert per_model[model_id][-1]=='DONE'
     assert 'BENCHMARK' in per_model['chat-model']
+
+
+def test_live_by_status_counts_only_done_rows(tmp_path,monkeypatch):
+    monkeypatch.setenv('KEY','s')
+    db=Database(tmp_path/'live-status.db')
+    svc=BenchmarkService(db)
+    p=svc.add_provider('p','P','openai-compatible','https://x','KEY')
+    m1=db.upsert_model(p.id,'m1',ModelStatus.ACTIVE,{})
+    m2=db.upsert_model(p.id,'m2',ModelStatus.ACTIVE,{})
+    run=db.create_run(p.id,'full')
+    db.init_run_progress(run.id,[m1,m2])
+    db.update_run_progress(run.id,m1.id,stage='DONE',outcome='ACTIVE',finished=True)
+    progress=svc.run_progress(run.id)
+    assert progress['processed']==1
+    assert progress['by_status']=={'ACTIVE':1}
+
+
+def test_callback_emits_smoke_pass_outcome(tmp_path,monkeypatch):
+    monkeypatch.setenv('KEY','s'); db=Database(tmp_path/'callback-outcome.db'); runner=Runner()
+    adapter=CapabilityAdapter([('chat-model',{'task':'text-generation'})])
+    events=[]
+    svc=BenchmarkService(db,adapter_factory=lambda p:adapter,benchmark_runner=runner,artifact_root=tmp_path/'a',stability_checks=0)
+    p=svc.add_provider('p','P','openai-compatible','https://x','KEY'); svc.discover(p.id)
+    run=svc.create_run(p.id,'full'); svc.execute_run(run.id,progress_callback=events.append)
+    assert any((e.get('event') or {}).get('stage')=='SMOKE' and (e.get('event') or {}).get('outcome')=='PASS' for e in events)

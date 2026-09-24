@@ -87,3 +87,11 @@ def test_benchmark_profile_is_only_text_baseline():
     assert p.benchmark_profile_for(ModelCapability.CHAT_TEXT) == "baseline-v1"
     assert p.benchmark_profile_for(ModelCapability.EMBEDDING) is None
     assert p.benchmark_profile_for(ModelCapability.PARSER) is None
+
+
+def test_rate_limit_probe_captures_numeric_retry_after():
+    from llmbench.domain import ModelCapability
+    client=httpx.Client(transport=httpx.MockTransport(lambda req:httpx.Response(429,headers={'Retry-After':'7'},json={'error':{'message':'rate limited'}})))
+    r=OpenAICompatibleProvider('https://api.example.test',client=client).probe('m','k',ModelCapability.CHAT_TEXT)
+    assert r.error_type=='RATE_LIMITED'
+    assert r.retry_after_seconds==7.0

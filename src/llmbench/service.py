@@ -149,8 +149,9 @@ class BenchmarkService:
         by_status = {}
         for row in snapshot['models']:
             status = self.db.get_model(run.provider_id, row['model_id']).status.value
-            by_status[status] = by_status.get(status, 0) + 1
             row['model_status'] = status
+            if row['stage'] == 'DONE':
+                by_status[status] = by_status.get(status, 0) + 1
         snapshot['by_status'] = by_status
         return snapshot
 
@@ -177,15 +178,19 @@ class BenchmarkService:
     def _retry_schedule(self, result: SmokeResult):
         if not result.retryable:
             return ()
-        if self.retry_delays_override is not None:
-            return self.retry_delays_override
-        return retry_delays_for(result.error_type or '')
+        base = self.retry_delays_override if self.retry_delays_override is not None else retry_delays_for(result.error_type or '')
+        retry_after = getattr(result, 'retry_after_seconds', None)
+        if (result.error_type or '').upper() == 'RATE_LIMITED' and retry_after is not None:
+            safe = max(0.0, float(retry_after))
+            return tuple(max(float(delay), safe) for delay in base)
+        return tuple(base)
 
     def _probe_with_retry(self, adapter, model, key, capability, run_id, stage, callback):
         prior = []
         self.db.update_run_progress(run_id, model.id, stage=stage, capability=capability, attempt_increment=1)
         self._emit(callback, run_id, model.model_id, stage, capability)
         result = self._invoke_probe(adapter, model.model_id, key, capability)
+        self._emit(callback, run_id, model.model_id, stage, capability, 'PASS' if result.ok else (result.error_type or 'FAIL'))
         for delay in self._retry_schedule(result):
             if result.ok or not result.retryable:
                 break
@@ -194,10 +199,11 @@ class BenchmarkService:
             self.db.update_run_progress(run_id, model.id, stage=stage, capability=capability, attempt_increment=1)
             self._emit(callback, run_id, model.model_id, stage, capability)
             result = self._invoke_probe(adapter, model.model_id, key, capability)
+            self._emit(callback, run_id, model.model_id, stage, capability, 'PASS' if result.ok else (result.error_type or 'FAIL'))
         return result, prior
 
     @staticmethod
-    def _failure_status(result: SmokeResult):
+    def _failure_status(result: SmokeResult, capability: ModelCapability):
         if result.error_type == 'UNSUPPORTED':
             return ModelStatus.UNSUPPORTED
         c = classify_http_error(result.status_code, result.message or '')
@@ -209,6 +215,8 @@ class BenchmarkService:
             return ModelStatus.UNSTABLE
         if result.error_type == 'AUTH_ERROR' or c.error_type == 'AUTH_ERROR':
             return None
+        if capability is ModelCapability.UNKNOWN:
+            return ModelStatus.INCOMPATIBLE
         return ModelStatus.FAILED
 
     def _finish_model(self, run_id, model, status, capability, callback, *, outcome=None, diagnostic=None):
@@ -266,7 +274,7 @@ class BenchmarkService:
             if not smoke.ok:
                 had_errors = True
                 self._record_smoke_error(run_id, model, smoke, key)
-                status = self._failure_status(smoke)
+                status = self._failure_status(smoke, capability)
                 if status is ModelStatus.INCOMPATIBLE:
                     refined = refine_capability_from_error(capability, smoke.message or '')
                     if refined is not None:
@@ -297,7 +305,7 @@ class BenchmarkService:
                     continue
                 had_errors = True
                 self._record_smoke_error(run_id, model, check, key)
-                status = self._failure_status(check)
+                status = self._failure_status(check, capability)
                 if check.retryable:
                     unstable = True
                     continue

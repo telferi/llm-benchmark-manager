@@ -5,7 +5,7 @@ from llmbench.benchmark.aiperf import BenchmarkOutcome
 
 class FakeAdapter:
     def __init__(self): self.calls={}
-    def discover_models(self,key): return [DiscoveredModel('good',{}),DiscoveredModel('flaky',{}),DiscoveredModel('bad',{})]
+    def discover_models(self,key): return [DiscoveredModel('good',{}),DiscoveredModel('flaky',{}),DiscoveredModel('bad',{'task':'text-generation'})]
     def smoke_test(self,model_id,key,**kw):
         n=self.calls.get(model_id,0); self.calls[model_id]=n+1
         if model_id=='bad': return SmokeResult(False,400,'PAYLOAD_ERROR','bad payload',False)
@@ -221,3 +221,24 @@ def test_error_specific_retry_schedules_and_recovery_marks_unstable(tmp_path,mon
         assert tuple(sleeps)==expected
         assert db.get_model(p.id,'model').status is ModelStatus.UNSTABLE
         assert adapter.calls==len(expected)+1
+
+
+def test_retry_after_is_minimum_delay_for_rate_limit(tmp_path):
+    from types import SimpleNamespace
+    svc=BenchmarkService(Database(tmp_path/'retry-after.db'))
+    result=SimpleNamespace(retryable=True,error_type='RATE_LIMITED',retry_after_seconds=7.0)
+    assert svc._retry_schedule(result)==(7.0,7.0,7.0,10)
+
+
+def test_unknown_generic_payload_failure_is_incompatible_not_failed(tmp_path,monkeypatch):
+    from llmbench.domain import ModelCapability
+    monkeypatch.setenv('KEY','s'); db=Database(tmp_path/'unknown400.db')
+    class Adapter:
+        def discover_models(self,key): return [DiscoveredModel('vendor/unknown-special',{})]
+        def probe(self,model_id,key,capability): return SmokeResult(False,400,'PAYLOAD_ERROR','unsupported request shape',False)
+        def smoke_test(self,*a,**k): return SmokeResult(False,400,'PAYLOAD_ERROR','unsupported request shape',False)
+        def benchmark_profile_for(self,capability): return None
+    svc=BenchmarkService(db,adapter_factory=lambda p:Adapter(),benchmark_runner=FakeRunner(),artifact_root=tmp_path/'a',stability_checks=0)
+    p=svc.add_provider('p','P','openai-compatible','https://x','KEY'); svc.discover(p.id)
+    run=svc.create_run(p.id,'full'); svc.execute_run(run.id)
+    assert db.get_model(p.id,'vendor/unknown-special').status is ModelStatus.INCOMPATIBLE
