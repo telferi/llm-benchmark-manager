@@ -2,7 +2,7 @@ from __future__ import annotations
 import json, sqlite3, uuid
 from pathlib import Path
 from datetime import datetime, timezone
-from .domain import Provider, ModelRecord, ModelStatus, BenchmarkRun, RunStatus
+from .domain import Provider, ModelRecord, ModelStatus, ModelCapability, BenchmarkRun, RunStatus
 
 def utcnow()->str: return datetime.now(timezone.utc).isoformat()
 
@@ -15,14 +15,30 @@ class Database:
         with self._connect() as c:
             c.executescript('''
             CREATE TABLE IF NOT EXISTS providers(id INTEGER PRIMARY KEY,slug TEXT UNIQUE NOT NULL,name TEXT NOT NULL,provider_type TEXT NOT NULL,base_url TEXT NOT NULL,credential_source TEXT NOT NULL,credential_ref TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,last_discovery_at TEXT);
-            CREATE TABLE IF NOT EXISTS models(id INTEGER PRIMARY KEY,provider_id INTEGER NOT NULL REFERENCES providers(id) ON DELETE CASCADE,model_id TEXT NOT NULL,status TEXT NOT NULL,first_seen_at TEXT NOT NULL,last_seen_at TEXT NOT NULL,last_success_at TEXT,last_failure_at TEXT,metadata_json TEXT NOT NULL DEFAULT '{}',UNIQUE(provider_id,model_id));
+            CREATE TABLE IF NOT EXISTS models(id INTEGER PRIMARY KEY,provider_id INTEGER NOT NULL REFERENCES providers(id) ON DELETE CASCADE,model_id TEXT NOT NULL,status TEXT NOT NULL,first_seen_at TEXT NOT NULL,last_seen_at TEXT NOT NULL,last_success_at TEXT,last_failure_at TEXT,metadata_json TEXT NOT NULL DEFAULT '{}',capability TEXT NOT NULL DEFAULT 'UNKNOWN',capability_source TEXT NOT NULL DEFAULT 'unknown',capability_confidence REAL NOT NULL DEFAULT 0.0,UNIQUE(provider_id,model_id));
             CREATE TABLE IF NOT EXISTS benchmark_runs(id TEXT PRIMARY KEY,provider_id INTEGER NOT NULL REFERENCES providers(id),mode TEXT NOT NULL,status TEXT NOT NULL,benchmark_profile TEXT NOT NULL,started_at TEXT,finished_at TEXT,aiperf_version TEXT,requested_by TEXT,config_json TEXT NOT NULL DEFAULT '{}');
             CREATE TABLE IF NOT EXISTS benchmark_results(id INTEGER PRIMARY KEY,run_id TEXT NOT NULL REFERENCES benchmark_runs(id),model_db_id INTEGER NOT NULL REFERENCES models(id),success_count INTEGER NOT NULL,error_count INTEGER NOT NULL,success_rate REAL NOT NULL,ttft_avg REAL,ttft_p50 REAL,ttft_p90 REAL,request_latency_avg REAL,request_latency_p50 REAL,request_latency_p90 REAL,output_tokens_per_second REAL,e2e_tokens_per_second REAL,inter_token_latency REAL,request_throughput REAL,benchmark_duration REAL,raw_artifact_path TEXT,metrics_json TEXT NOT NULL DEFAULT '{}');
             CREATE TABLE IF NOT EXISTS errors(id INTEGER PRIMARY KEY,run_id TEXT NOT NULL REFERENCES benchmark_runs(id),model_db_id INTEGER NOT NULL REFERENCES models(id),http_status INTEGER,error_type TEXT NOT NULL,normalized_error TEXT,provider_message TEXT,count INTEGER NOT NULL DEFAULT 1);
             CREATE TABLE IF NOT EXISTS model_status_history(id INTEGER PRIMARY KEY,model_db_id INTEGER NOT NULL REFERENCES models(id),old_status TEXT,new_status TEXT NOT NULL,reason TEXT,changed_at TEXT NOT NULL);
             ''')
+            cols={r['name'] for r in c.execute('PRAGMA table_info(models)').fetchall()}
+            if 'capability' not in cols: c.execute("ALTER TABLE models ADD COLUMN capability TEXT NOT NULL DEFAULT 'UNKNOWN'")
+            if 'capability_source' not in cols: c.execute("ALTER TABLE models ADD COLUMN capability_source TEXT NOT NULL DEFAULT 'unknown'")
+            if 'capability_confidence' not in cols: c.execute("ALTER TABLE models ADD COLUMN capability_confidence REAL NOT NULL DEFAULT 0.0")
+            c.execute("""CREATE TABLE IF NOT EXISTS run_model_progress(
+                run_id TEXT NOT NULL REFERENCES benchmark_runs(id) ON DELETE CASCADE,
+                model_db_id INTEGER NOT NULL REFERENCES models(id),
+                capability TEXT NOT NULL DEFAULT 'UNKNOWN',
+                stage TEXT NOT NULL DEFAULT 'PENDING',
+                outcome TEXT,
+                started_at TEXT,
+                finished_at TEXT,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                diagnostic_code TEXT,
+                PRIMARY KEY(run_id, model_db_id)
+            )""")
     def _provider(self,r): return Provider(r['id'],r['slug'],r['name'],r['provider_type'],r['base_url'],r['credential_source'],r['credential_ref'],r['created_at'],r['updated_at'],r['last_discovery_at'])
-    def _model(self,r): return ModelRecord(r['id'],r['provider_id'],r['model_id'],ModelStatus(r['status']),r['first_seen_at'],r['last_seen_at'],r['last_success_at'],r['last_failure_at'],json.loads(r['metadata_json'] or '{}'))
+    def _model(self,r): return ModelRecord(r['id'],r['provider_id'],r['model_id'],ModelStatus(r['status']),r['first_seen_at'],r['last_seen_at'],r['last_success_at'],r['last_failure_at'],json.loads(r['metadata_json'] or '{}'),ModelCapability(r['capability']),r['capability_source'],float(r['capability_confidence']))
     def add_provider(self,slug,name,provider_type,base_url,credential_source='env',credential_ref=''):
         now=utcnow()
         with self._connect() as c:
@@ -84,6 +100,38 @@ class Database:
             c.execute('UPDATE models SET status=?,last_success_at=COALESCE(?,last_success_at),last_failure_at=COALESCE(?,last_failure_at) WHERE id=?',(status.value,success,failure,model_db_id))
             if old!=status.value:c.execute('INSERT INTO model_status_history(model_db_id,old_status,new_status,reason,changed_at) VALUES(?,?,?,?,?)',(model_db_id,old,status.value,reason,now))
         return self.get_model_by_id(model_db_id)
+
+    def set_model_capability(self,model_db_id:int,capability:ModelCapability,source:str,confidence:float):
+        with self._connect() as c:
+            c.execute('UPDATE models SET capability=?,capability_source=?,capability_confidence=? WHERE id=?',(capability.value,source,float(confidence),model_db_id))
+        return self.get_model_by_id(model_db_id)
+
+    def init_run_progress(self,run_id:str,models:list[ModelRecord])->None:
+        with self._connect() as c:
+            c.executemany('INSERT OR IGNORE INTO run_model_progress(run_id,model_db_id,capability,stage) VALUES(?,?,?,?)',[(run_id,m.id,m.capability.value,'PENDING') for m in models])
+
+    def update_run_progress(self,run_id:str,model_db_id:int,*,stage:str,capability:ModelCapability|None=None,outcome:str|None=None,attempt_increment:int=0,diagnostic_code:str|None=None,finished:bool=False)->None:
+        now=utcnow()
+        with self._connect() as c:
+            r=c.execute('SELECT 1 FROM run_model_progress WHERE run_id=? AND model_db_id=?',(run_id,model_db_id)).fetchone()
+            if not r: raise KeyError((run_id,model_db_id))
+            c.execute('UPDATE run_model_progress SET stage=?,capability=COALESCE(?,capability),outcome=COALESCE(?,outcome),started_at=COALESCE(started_at,?),finished_at=CASE WHEN ? THEN ? ELSE finished_at END,attempt_count=attempt_count+?,diagnostic_code=COALESCE(?,diagnostic_code) WHERE run_id=? AND model_db_id=?',(stage,capability.value if capability else None,outcome,now,1 if finished else 0,now,int(attempt_increment),diagnostic_code,run_id,model_db_id))
+
+    def get_run_progress(self,run_id:str)->dict:
+        self.get_run(run_id)
+        with self._connect() as c:
+            rows=c.execute('SELECT p.*,m.model_id FROM run_model_progress p JOIN models m ON m.id=p.model_db_id WHERE p.run_id=? ORDER BY m.model_id',(run_id,)).fetchall()
+        models=[dict(r) for r in rows]
+        total=len(models); processed=sum(1 for r in models if r['stage']=='DONE')
+        by_outcome={}
+        for r in models:
+            if r['outcome']:
+                by_outcome[r['outcome']]=by_outcome.get(r['outcome'],0)+1
+        current=next((r for r in models if r['stage'] not in ('PENDING','DONE')),None)
+        if current is None: current=next((r for r in models if r['stage']=='PENDING'),None)
+        cur=None if current is None else {'model_id':current['model_id'],'stage':current['stage'],'capability':current['capability']}
+        return {'run_id':run_id,'total':total,'processed':processed,'percent':round((processed/total*100.0) if total else 100.0,1),'current':cur,'by_outcome':by_outcome,'models':models}
+
     def create_run(self,provider_id:int,mode:str,profile='baseline-v1',requested_by='cli',config=None,run_id=None):
         rid=run_id or 'run_'+uuid.uuid4().hex[:16]
         with self._connect() as c:c.execute('INSERT INTO benchmark_runs(id,provider_id,mode,status,benchmark_profile,requested_by,config_json) VALUES(?,?,?,?,?,?,?)',(rid,provider_id,mode,RunStatus.QUEUED.value,profile,requested_by,json.dumps(config or {},sort_keys=True)))
