@@ -35,8 +35,11 @@ class Database:
                 finished_at TEXT,
                 attempt_count INTEGER NOT NULL DEFAULT 0,
                 diagnostic_code TEXT,
+                final_status TEXT,
                 PRIMARY KEY(run_id, model_db_id)
             )""")
+            progress_cols={r['name'] for r in c.execute('PRAGMA table_info(run_model_progress)').fetchall()}
+            if 'final_status' not in progress_cols: c.execute("ALTER TABLE run_model_progress ADD COLUMN final_status TEXT")
     def _provider(self,r): return Provider(r['id'],r['slug'],r['name'],r['provider_type'],r['base_url'],r['credential_source'],r['credential_ref'],r['created_at'],r['updated_at'],r['last_discovery_at'])
     def _model(self,r): return ModelRecord(r['id'],r['provider_id'],r['model_id'],ModelStatus(r['status']),r['first_seen_at'],r['last_seen_at'],r['last_success_at'],r['last_failure_at'],json.loads(r['metadata_json'] or '{}'),ModelCapability(r['capability']),r['capability_source'],float(r['capability_confidence']))
     def add_provider(self,slug,name,provider_type,base_url,credential_source='env',credential_ref=''):
@@ -110,12 +113,12 @@ class Database:
         with self._connect() as c:
             c.executemany('INSERT OR IGNORE INTO run_model_progress(run_id,model_db_id,capability,stage) VALUES(?,?,?,?)',[(run_id,m.id,m.capability.value,'PENDING') for m in models])
 
-    def update_run_progress(self,run_id:str,model_db_id:int,*,stage:str,capability:ModelCapability|None=None,outcome:str|None=None,attempt_increment:int=0,diagnostic_code:str|None=None,finished:bool=False)->None:
+    def update_run_progress(self,run_id:str,model_db_id:int,*,stage:str,capability:ModelCapability|None=None,outcome:str|None=None,attempt_increment:int=0,diagnostic_code:str|None=None,final_status:ModelStatus|None=None,finished:bool=False)->None:
         now=utcnow()
         with self._connect() as c:
             r=c.execute('SELECT 1 FROM run_model_progress WHERE run_id=? AND model_db_id=?',(run_id,model_db_id)).fetchone()
             if not r: raise KeyError((run_id,model_db_id))
-            c.execute('UPDATE run_model_progress SET stage=?,capability=COALESCE(?,capability),outcome=COALESCE(?,outcome),started_at=COALESCE(started_at,?),finished_at=CASE WHEN ? THEN ? ELSE finished_at END,attempt_count=attempt_count+?,diagnostic_code=COALESCE(?,diagnostic_code) WHERE run_id=? AND model_db_id=?',(stage,capability.value if capability else None,outcome,now,1 if finished else 0,now,int(attempt_increment),diagnostic_code,run_id,model_db_id))
+            c.execute('UPDATE run_model_progress SET stage=?,capability=COALESCE(?,capability),outcome=COALESCE(?,outcome),started_at=COALESCE(started_at,?),finished_at=CASE WHEN ? THEN ? ELSE finished_at END,attempt_count=attempt_count+?,diagnostic_code=COALESCE(?,diagnostic_code),final_status=COALESCE(?,final_status) WHERE run_id=? AND model_db_id=?',(stage,capability.value if capability else None,outcome,now,1 if finished else 0,now,int(attempt_increment),diagnostic_code,final_status.value if final_status else None,run_id,model_db_id))
 
     def get_run_progress(self,run_id:str)->dict:
         self.get_run(run_id)

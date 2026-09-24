@@ -147,8 +147,13 @@ class BenchmarkService:
         snapshot = self.db.get_run_progress(run_id)
         run = self.db.get_run(run_id)
         by_status = {}
+        valid_statuses = {status.value for status in ModelStatus}
         for row in snapshot['models']:
-            status = self.db.get_model(run.provider_id, row['model_id']).status.value
+            status = row.get('final_status')
+            if not status and row['stage'] == 'DONE' and row.get('outcome') in valid_statuses:
+                status = row['outcome']
+            if not status:
+                status = self.db.get_model(run.provider_id, row['model_id']).status.value
             row['model_status'] = status
             if row['stage'] == 'DONE':
                 by_status[status] = by_status.get(status, 0) + 1
@@ -223,7 +228,7 @@ class BenchmarkService:
         if status is not None:
             self.db.set_model_status(model.id, status, diagnostic or 'run complete')
         final_outcome = outcome if outcome is not None else (status.value if status is not None else diagnostic)
-        self.db.update_run_progress(run_id, model.id, stage='DONE', capability=capability, outcome=final_outcome, diagnostic_code=diagnostic, finished=True)
+        self.db.update_run_progress(run_id, model.id, stage='DONE', capability=capability, outcome=final_outcome, diagnostic_code=diagnostic, final_status=status, finished=True)
         self._emit(callback, run_id, model.model_id, 'DONE', capability, final_outcome)
 
     def _initial_detection(self, model):

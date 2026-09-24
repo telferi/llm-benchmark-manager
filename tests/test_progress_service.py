@@ -95,3 +95,39 @@ def test_callback_emits_smoke_pass_outcome(tmp_path,monkeypatch):
     p=svc.add_provider('p','P','openai-compatible','https://x','KEY'); svc.discover(p.id)
     run=svc.create_run(p.id,'full'); svc.execute_run(run.id,progress_callback=events.append)
     assert any((e.get('event') or {}).get('stage')=='SMOKE' and (e.get('event') or {}).get('outcome')=='PASS' for e in events)
+
+
+def test_historical_run_by_status_uses_persisted_run_outcome_not_current_model_status(tmp_path,monkeypatch):
+    monkeypatch.setenv('KEY','s')
+    db=Database(tmp_path/'historical-status.db')
+    svc=BenchmarkService(db)
+    p=svc.add_provider('p','P','openai-compatible','https://x','KEY')
+    m=db.upsert_model(p.id,'m1',ModelStatus.ACTIVE,{})
+    run=db.create_run(p.id,'full')
+    db.init_run_progress(run.id,[m])
+    db.update_run_progress(run.id,m.id,stage='DONE',outcome='ACTIVE',finished=True)
+
+    # A later retest changes the model's current status. Historical run summary
+    # must remain an immutable view of what that run concluded.
+    db.set_model_status(m.id,ModelStatus.UNSTABLE,'later retest')
+
+    progress=svc.run_progress(run.id)
+    assert progress['by_status']=={'ACTIVE':1}
+
+
+def test_historical_skipped_benchmark_keeps_run_final_status_after_later_retest(tmp_path,monkeypatch):
+    monkeypatch.setenv('KEY','s')
+    db=Database(tmp_path/'historical-skip.db'); runner=Runner()
+    adapter=CapabilityAdapter([('embed-model',{'task':'embeddings'})])
+    svc=BenchmarkService(db,adapter_factory=lambda p:adapter,benchmark_runner=runner,artifact_root=tmp_path/'a',stability_checks=0)
+    p=svc.add_provider('p','P','openai-compatible','https://x','KEY'); svc.discover(p.id)
+    run=svc.create_run(p.id,'full'); svc.execute_run(run.id)
+    model=db.get_model(p.id,'embed-model')
+    assert svc.run_progress(run.id)['by_status']=={'ACTIVE':1}
+    assert svc.run_progress(run.id)['models'][0]['outcome']=='SKIPPED_UNSUPPORTED_PROFILE'
+
+    db.set_model_status(model.id,ModelStatus.UNSTABLE,'later retest')
+
+    progress=svc.run_progress(run.id)
+    assert progress['by_status']=={'ACTIVE':1}
+    assert progress['models'][0]['outcome']=='SKIPPED_UNSUPPORTED_PROFILE'
