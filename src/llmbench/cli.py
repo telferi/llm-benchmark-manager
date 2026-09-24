@@ -19,6 +19,40 @@ def build_parser():
     mcp=sub.add_parser('mcp'); mcp.add_argument('--transport',default='stdio')
     return p
 
+
+
+_STATUS_ORDER=("ACTIVE","UNSTABLE","NOT_AVAILABLE","INCOMPATIBLE","UNSUPPORTED","FAILED")
+
+def _render_progress(snapshot: dict) -> None:
+    event=snapshot.get("event") or {}
+    current=snapshot.get("current") or {}
+    model_id=event.get("model_id") or current.get("model_id")
+    if not model_id:
+        return
+    total=int(snapshot.get("total",0) or 0)
+    processed=int(snapshot.get("processed",0) or 0)
+    percent=float(snapshot.get("percent",0.0) or 0.0)
+    stage=event.get("stage") or current.get("stage") or "PENDING"
+    capability=event.get("capability") or current.get("capability") or "UNKNOWN"
+    outcome=event.get("outcome")
+    print(f"[{processed}/{total}] {percent:.1f}%  {model_id}")
+    print(f"Capability: {capability}")
+    label={"SMOKE":"Smoke","STABILITY":"Stability","BENCHMARK":"AIPerf","CAPABILITY":"Capability stage","DONE":"Done"}.get(stage,stage.title())
+    if stage != "CAPABILITY":
+        print(f"{label}: {outcome or 'RUNNING'}")
+
+def _render_run_summary(snapshot: dict) -> None:
+    counts=snapshot.get("by_status") or {}
+    print("Run summary:")
+    for status in _STATUS_ORDER:
+        print(f"{status}: {int(counts.get(status,0) or 0)}")
+    print(f"Total processed: {int(snapshot.get('processed',0) or 0)}")
+
+def _execute_with_progress(service, run):
+    done=service.execute_run(run.id,progress_callback=_render_progress)
+    _render_run_summary(service.run_progress(run.id))
+    return done
+
 def _normalize_env_name(value: str) -> str | None:
     raw=value.strip()
     if raw.startswith('${') and raw.endswith('}'):
@@ -63,7 +97,7 @@ def _interactive(service,jobs):
             print(f'Added {pr.slug}. Credential: {"STORED" if available else "MISSING"} ({pr.credential_source})')
             if available:
                 try:
-                    found=service.discover(pr.id); run=service.create_run(pr.id,'full'); done=service.execute_run(run.id)
+                    found=service.discover(pr.id); run=service.create_run(pr.id,'full'); done=_execute_with_progress(service,run)
                     print(f'Discovered {len(found.seen)} models. Benchmark {run.id}: {done.status.value}')
                 except Exception as e:
                     print(f'Automatic onboarding failed: {e}')
@@ -82,15 +116,15 @@ def _interactive(service,jobs):
             elif action=='2': mode='active'
             elif action=='3': mode='unstable_failed'
             elif action=='5':
-                model_id=input('Model id: ').strip(); run=service.create_run(pr.id,'full',model_id=model_id); done=service.execute_run(run.id); print(f'{run.id}: {done.status.value}'); continue
+                model_id=input('Model id: ').strip(); run=service.create_run(pr.id,'full',model_id=model_id); done=_execute_with_progress(service,run); print(f'{run.id}: {done.status.value}'); continue
             elif action=='6':
                 for m in service.db.list_models(pr.id): print(f'{m.model_id}\t{m.status.value}')
                 continue
             else: continue
-            run=service.create_run(pr.id,mode); done=service.execute_run(run.id); print(f'{run.id}: {done.status.value}')
+            run=service.create_run(pr.id,mode); done=_execute_with_progress(service,run); print(f'{run.id}: {done.status.value}')
         elif choice=='3':
             for pr in service.list_providers():
-                run=service.create_run(pr.id,'full'); done=service.execute_run(run.id); print(f'{pr.slug}: {done.status.value}')
+                run=service.create_run(pr.id,'full'); done=_execute_with_progress(service,run); print(f'{pr.slug}: {done.status.value}')
         elif choice=='4':
             rid=input('Run id: ').strip(); print(json.dumps(service.results(rid),indent=2,default=str))
         elif choice=='5': print('Interactive provider keys use the OS keyring when available, with encrypted local fallback. ENV credentials remain supported for automation.')
@@ -112,10 +146,10 @@ def main(argv=None,service=None,jobs=None):
     if args.command=='run':
         targets=service.list_providers() if args.all else [service.resolve_provider(args.provider)]
         for pr in targets:
-            run=service.create_run(pr.id,args.mode); done=service.execute_run(run.id); print(f'{run.id}\t{pr.slug}\t{done.status.value}')
+            run=service.create_run(pr.id,args.mode); done=_execute_with_progress(service,run); print(f'{run.id}\t{pr.slug}\t{done.status.value}')
         return 0
     if args.command=='model' and args.model_command=='test':
-        run=service.create_run(args.provider,'full',model_id=args.model_id); done=service.execute_run(run.id); print(f'{run.id}\t{done.status.value}'); return 0
+        run=service.create_run(args.provider,'full',model_id=args.model_id); done=_execute_with_progress(service,run); print(f'{run.id}\t{done.status.value}'); return 0
     if args.command=='results': print(json.dumps(service.results(args.run_id),indent=2,default=str)); return 0
     if args.command=='history': print(json.dumps(service.model_history(args.provider,args.model_id),indent=2,default=str)); return 0
     if args.command=='export': print(export_run(service.db,args.run_id,args.format,args.output)); return 0

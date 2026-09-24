@@ -56,4 +56,29 @@ def test_interactive_new_provider_asks_only_url_and_hidden_key_then_benchmarks(t
     assert svc.db.get_model(pr.id,'m').status==ModelStatus.ACTIVE
     assert not any('slug' in prompt.lower() or 'name' in prompt.lower() or 'env' in prompt.lower() for prompt in prompts)
     assert secret_prompts==['API key: ']
-    assert 'nvapi-hidden' not in capsys.readouterr().out
+    out=capsys.readouterr().out
+    assert 'nvapi-hidden' not in out
+    assert '[1/1] 100.0%' in out
+    assert 'Total processed: 1' in out
+    assert 'ACTIVE' in out
+
+
+def test_render_progress_prints_exact_live_stage(capsys):
+    from llmbench.cli import _render_progress
+    _render_progress({
+        'total':5,'processed':2,'percent':40.0,
+        'event':{'model_id':'vendor/model-b','stage':'SMOKE','capability':'CHAT_TEXT','outcome':'PASS'},
+    })
+    out=capsys.readouterr().out
+    assert '[2/5] 40.0%  vendor/model-b' in out
+    assert 'Capability: CHAT_TEXT' in out
+    assert 'Smoke: PASS' in out
+
+
+def test_render_run_summary_includes_all_terminal_statuses(capsys):
+    from llmbench.cli import _render_run_summary
+    _render_run_summary({'processed':5,'by_status':{'ACTIVE':2,'UNSTABLE':1,'NOT_AVAILABLE':1,'INCOMPATIBLE':1}})
+    out=capsys.readouterr().out
+    for label in ('ACTIVE','UNSTABLE','NOT_AVAILABLE','INCOMPATIBLE','UNSUPPORTED','FAILED'):
+        assert label in out
+    assert 'Total processed: 5' in out
