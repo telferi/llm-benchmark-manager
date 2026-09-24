@@ -48,6 +48,8 @@ class Database:
             r=c.execute('SELECT * FROM models WHERE provider_id=? AND model_id=?',(provider_id,model_id)).fetchone()
             if r:
                 c.execute('UPDATE models SET status=?,last_seen_at=?,metadata_json=? WHERE id=?',(status.value,now,meta,r['id']))
+                if r['status']!=status.value:
+                    c.execute('INSERT INTO model_status_history(model_db_id,old_status,new_status,reason,changed_at) VALUES(?,?,?,?,?)',(r['id'],r['status'],status.value,'upsert status change',now))
             else:
                 cur=c.execute('INSERT INTO models(provider_id,model_id,status,first_seen_at,last_seen_at,metadata_json) VALUES(?,?,?,?,?,?)',(provider_id,model_id,status.value,now,now,meta))
                 c.execute('INSERT INTO model_status_history(model_db_id,old_status,new_status,reason,changed_at) VALUES(?,?,?,?,?)',(cur.lastrowid,None,status.value,'discovered',now))
