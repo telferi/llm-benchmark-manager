@@ -34,3 +34,25 @@ def test_interactive_new_provider_onboards_and_benchmarks(tmp_path,monkeypatch):
     assert main([],service=svc,jobs=LocalJobManager())==0
     pr=svc.resolve_provider('p')
     assert svc.db.get_model(pr.id,'m').status==ModelStatus.ACTIVE
+
+def test_interactive_normalizes_dollar_prefixed_env_name(tmp_path,monkeypatch):
+    monkeypatch.setenv('NVIDIA_API_KEY','dummy')
+    svc=service(tmp_path)
+    answers=iter(['1','nvidia','NVIDIA','https://integrate.api.nvidia.com','$NVIDIA_API_KEY','6'])
+    monkeypatch.setattr('builtins.input',lambda p='':next(answers))
+    # Prevent network onboarding; we only verify accepted/stored env reference.
+    monkeypatch.setattr(svc,'discover',lambda provider: (_ for _ in ()).throw(RuntimeError('skip network')))
+    assert main([],service=svc,jobs=LocalJobManager())==0
+    assert svc.resolve_provider('nvidia').credential_ref=='NVIDIA_API_KEY'
+
+
+def test_interactive_reprompts_invalid_env_instead_of_crashing(tmp_path,monkeypatch,capsys):
+    monkeypatch.setenv('NVIDIA_API_KEY','dummy')
+    svc=service(tmp_path)
+    answers=iter(['1','nvidia','NVIDIA','https://integrate.api.nvidia.com','not-an-env-name','NVIDIA_API_KEY','6'])
+    monkeypatch.setattr('builtins.input',lambda p='':next(answers))
+    monkeypatch.setattr(svc,'discover',lambda provider: (_ for _ in ()).throw(RuntimeError('skip network')))
+    assert main([],service=svc,jobs=LocalJobManager())==0
+    out=capsys.readouterr().out
+    assert 'Invalid ENV variable name' in out
+    assert svc.resolve_provider('nvidia').credential_ref=='NVIDIA_API_KEY'

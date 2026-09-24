@@ -1,5 +1,5 @@
 from __future__ import annotations
-import argparse, json
+import argparse, json, re
 from dataclasses import asdict
 from .runtime import build_runtime
 from .export import export_run
@@ -18,6 +18,22 @@ def build_parser():
     serve=sub.add_parser('serve'); serve.add_argument('--host',default='127.0.0.1'); serve.add_argument('--port',type=int,default=8765)
     mcp=sub.add_parser('mcp'); mcp.add_argument('--transport',default='stdio')
     return p
+
+def _normalize_env_name(value: str) -> str | None:
+    raw=value.strip()
+    if raw.startswith('${') and raw.endswith('}'):
+        raw=raw[2:-1].strip()
+    elif raw.startswith('$'):
+        raw=raw[1:].strip()
+    return raw if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',raw or '') else None
+
+def _prompt_env_name() -> str:
+    while True:
+        raw=input('API credential ENV variable (e.g. NVIDIA_API_KEY): ').strip()
+        env=_normalize_env_name(raw)
+        if env:
+            return env
+        print('Invalid ENV variable name. Enter only the variable name, for example NVIDIA_API_KEY (a leading $ is also accepted).')
 
 def _provider_lines(service):
     lines=[]
@@ -38,7 +54,7 @@ def _interactive(service,jobs):
         choice=input('Choice: ').strip()
         if choice=='6': return 0
         if choice=='1':
-            slug=input('Provider slug: ').strip(); name=input('Provider name: ').strip(); url=input('Endpoint URL: ').strip(); env=input('API credential ENV variable: ').strip()
+            slug=input('Provider slug: ').strip(); name=input('Provider name: ').strip(); url=input('Endpoint URL: ').strip(); env=_prompt_env_name()
             pr=service.add_provider(slug,name,'openai-compatible',url,env); available=service.credentials.availability(env); print(f'Added {pr.slug}. Credential: {"FOUND" if available else "MISSING"}')
             if available:
                 try:
