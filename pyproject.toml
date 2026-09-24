@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-benchmark-manager"
+version = "0.1.0"
+description = "Provider-agnostic LLM discovery, stability testing and AIPerf benchmarking"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.28,<1",
+  "pydantic>=2.11,<3",
+  "fastapi>=0.141,<1",
+  "uvicorn>=0.35,<1",
+  "fastmcp>=4,<5",
+  "PyYAML>=6,<7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9", "build>=1,<2"]
+
+[project.scripts]
+llmbench = "llmbench.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,35 @@
+import httpx
+from llmbench.providers.openai_compatible import OpenAICompatibleProvider, normalize_error
+
+def test_discovery_normalizes_v1_and_sets_auth():
+    seen=[]
+    def handler(req):
+        seen.append(req)
+        return httpx.Response(200,json={"data":[{"id":"m1"},{"id":"m2"}]})
+    client=httpx.Client(transport=httpx.MockTransport(handler))
+    p=OpenAICompatibleProvider("https://api.example.test/v1",client=client)
+    models=p.discover_models("sekret")
+    assert [m.model_id for m in models] == ["m1","m2"]
+    assert str(seen[0].url) == "https://api.example.test/v1/models"
+    assert seen[0].headers["Authorization"] == "Bearer sekret"
+
+def test_discovery_adds_v1_when_missing():
+    seen=[]
+    client=httpx.Client(transport=httpx.MockTransport(lambda req:(seen.append(req) or httpx.Response(200,json={"data":[]}))))
+    OpenAICompatibleProvider("https://api.example.test",client=client).discover_models("k")
+    assert str(seen[0].url) == "https://api.example.test/v1/models"
+
+def test_smoke_classifies_overload_and_empty_content():
+    client=httpx.Client(transport=httpx.MockTransport(lambda req:httpx.Response(503,json={"error":{"message":"Service temporarily overloaded"}})))
+    p=OpenAICompatibleProvider("https://api.example.test",client=client)
+    r=p.smoke_test("m","k")
+    assert (r.ok,r.error_type,r.retryable) == (False,"OVERLOADED",True)
+    client2=httpx.Client(transport=httpx.MockTransport(lambda req:httpx.Response(200,json={"choices":[{"message":{"content":""}}]})))
+    r2=OpenAICompatibleProvider("https://api.example.test",client=client2).smoke_test("m","k")
+    assert r2.error_type == "EMPTY_RESPONSE"
+
+def test_error_normalization():
+    assert normalize_error(401,"x")[0] == "AUTH_ERROR"
+    assert normalize_error(429,"x") == ("RATE_LIMITED",True)
+    assert normalize_error(503,"x") == ("OVERLOADED",True)
+    assert normalize_error(400,"x")[0] == "PAYLOAD_ERROR"
