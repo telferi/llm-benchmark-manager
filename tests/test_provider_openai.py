@@ -39,3 +39,51 @@ def test_network_error_is_retryable():
     client=httpx.Client(transport=httpx.MockTransport(handler))
     r=OpenAICompatibleProvider('https://api.example.test',client=client).smoke_test('m','k')
     assert r.ok is False and r.error_type=='NETWORK_ERROR' and r.retryable is True
+
+
+def test_probe_chat_accepts_alternate_reasoning_output():
+    from llmbench.domain import ModelCapability
+    client=httpx.Client(transport=httpx.MockTransport(lambda req:httpx.Response(200,json={"choices":[{"message":{"content":None,"reasoning_content":"hello"}}]})))
+    r=OpenAICompatibleProvider("https://api.example.test",client=client).probe("m","k",ModelCapability.CHAT_TEXT)
+    assert r.ok is True
+    assert r.content == "hello"
+
+
+def test_probe_embedding_uses_embeddings_endpoint_and_validates_vector():
+    import json
+    from llmbench.domain import ModelCapability
+    seen=[]
+    def handler(req):
+        seen.append((str(req.url), json.loads(req.content.decode())))
+        return httpx.Response(200,json={"data":[{"embedding":[0.1,0.2,0.3]}]})
+    client=httpx.Client(transport=httpx.MockTransport(handler))
+    r=OpenAICompatibleProvider("https://api.example.test",client=client).probe("embed-model","k",ModelCapability.EMBEDDING)
+    assert r.ok is True
+    assert len(seen) == 1
+    assert seen[0][0] == "https://api.example.test/v1/embeddings"
+    assert seen[0][1]["model"] == "embed-model"
+    assert isinstance(seen[0][1]["input"], str) and seen[0][1]["input"]
+
+
+def test_probe_unsupported_capabilities_perform_no_http():
+    from llmbench.domain import ModelCapability
+    called=[]
+    def handler(req):
+        called.append(req)
+        raise AssertionError("HTTP must not be called for unsupported generic capability")
+    p=OpenAICompatibleProvider("https://api.example.test",client=httpx.Client(transport=httpx.MockTransport(handler)))
+    caps=(ModelCapability.PARSER,ModelCapability.TRANSLATION,ModelCapability.SAFETY,ModelCapability.RERANK,ModelCapability.SPECIAL,ModelCapability.VISION,ModelCapability.MULTIMODAL)
+    for cap in caps:
+        r=p.probe("m","k",cap)
+        assert r.ok is False
+        assert r.error_type == "UNSUPPORTED"
+        assert r.retryable is False
+    assert called == []
+
+
+def test_benchmark_profile_is_only_text_baseline():
+    from llmbench.domain import ModelCapability
+    p=OpenAICompatibleProvider("https://api.example.test")
+    assert p.benchmark_profile_for(ModelCapability.CHAT_TEXT) == "baseline-v1"
+    assert p.benchmark_profile_for(ModelCapability.EMBEDDING) is None
+    assert p.benchmark_profile_for(ModelCapability.PARSER) is None
