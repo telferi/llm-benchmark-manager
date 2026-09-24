@@ -47,6 +47,12 @@ def create_app(service,jobs):
     def run_create(body:RunCreate):
         try: run=service.create_run(body.provider,body.mode,requested_by='api'); jobs.submit(run.id,lambda cancelled:service.execute_run(run.id,cancelled)); return {'run_id':run.id,'status':'queued'}
         except Exception as e: raise HTTPException(400,str(e))
+    @app.get('/api/v1/runs/{run_id}/progress')
+    def run_progress(run_id:str):
+        try:
+            return _jsonable(service.run_progress(run_id))
+        except KeyError:
+            raise HTTPException(404,'run not found')
     @app.get('/api/v1/runs/{run_id}')
     def run_get(run_id:str):
         try:return _jsonable(service.db.get_run(run_id))

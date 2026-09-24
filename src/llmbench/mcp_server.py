@@ -7,7 +7,7 @@ from fastmcp import FastMCP
 MCP_TOOL_NAMES=(
  'benchmark_provider_list','benchmark_provider_get','benchmark_provider_discover',
  'benchmark_model_list','benchmark_model_get','benchmark_model_history',
- 'benchmark_run_start','benchmark_run_status','benchmark_run_cancel','benchmark_run_results',
+ 'benchmark_run_start','benchmark_run_status','benchmark_run_progress','benchmark_run_cancel','benchmark_run_results',
  'benchmark_retest_unstable','benchmark_test_new_models')
 
 def _j(v:Any):
@@ -29,6 +29,7 @@ def get_mcp_tool_functions(service,jobs)->dict[str,Callable]:
         run=service.create_run(provider,mode,requested_by='mcp'); jobs.submit(run.id,lambda cancelled:service.execute_run(run.id,cancelled)); return {'run_id':run.id,'status':'QUEUED'}
     def benchmark_run_start(provider:str,mode:str='full')->dict: return _start(provider,mode)
     def benchmark_run_status(run_id:str)->dict: return _j(service.db.get_run(run_id))
+    def benchmark_run_progress(run_id:str)->dict: return _j(service.run_progress(run_id))
     def benchmark_run_cancel(run_id:str)->dict: return {'run_id':run_id,'cancel_requested':jobs.cancel(run_id)}
     def benchmark_run_results(run_id:str)->dict: return _j(service.results(run_id))
     def benchmark_retest_unstable(provider:str)->dict: return _start(provider,'unstable_failed')
