@@ -95,3 +95,39 @@ def test_rate_limit_probe_captures_numeric_retry_after():
     r=OpenAICompatibleProvider('https://api.example.test',client=client).probe('m','k',ModelCapability.CHAT_TEXT)
     assert r.error_type=='RATE_LIMITED'
     assert r.retry_after_seconds==7.0
+
+
+def test_probe_embedding_retries_asymmetric_model_with_query_input_type():
+    import json
+    from llmbench.domain import ModelCapability
+    seen=[]
+    def handler(req):
+        payload=json.loads(req.content.decode())
+        seen.append(payload)
+        if len(seen)==1:
+            return httpx.Response(400,json={"error":{"message":"'input_type' parameter is required for asymmetric models"}})
+        return httpx.Response(200,json={"data":[{"embedding":[0.4,0.5]}]})
+    client=httpx.Client(transport=httpx.MockTransport(handler))
+    r=OpenAICompatibleProvider("https://integrate.api.nvidia.com",client=client).probe(
+        "nvidia/llama-nemotron-embed-vl-1b-v2","k",ModelCapability.EMBEDDING
+    )
+    assert r.ok is True
+    assert len(seen)==2
+    assert "input_type" not in seen[0]
+    assert seen[1]["input_type"]=="query"
+
+
+def test_probe_embedding_does_not_retry_unrelated_payload_error_with_input_type():
+    import json
+    from llmbench.domain import ModelCapability
+    seen=[]
+    def handler(req):
+        seen.append(json.loads(req.content.decode()))
+        return httpx.Response(400,json={"error":{"message":"invalid dimensions"}})
+    client=httpx.Client(transport=httpx.MockTransport(handler))
+    r=OpenAICompatibleProvider("https://integrate.api.nvidia.com",client=client).probe(
+        "embed-model","k",ModelCapability.EMBEDDING
+    )
+    assert r.ok is False
+    assert r.error_type=="PAYLOAD_ERROR"
+    assert len(seen)==1

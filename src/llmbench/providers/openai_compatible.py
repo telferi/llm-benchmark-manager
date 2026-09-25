@@ -106,8 +106,14 @@ class OpenAICompatibleProvider:
 
     def _probe_embedding(self, model_id: str, api_key: str):
         t = time.perf_counter()
+        payload = {'model': model_id, 'input': 'hello'}
         try:
-            r = self.client.post(self._v1() + '/embeddings', headers=self._headers(api_key), json={'model': model_id, 'input': 'hello'})
+            r = self.client.post(self._v1() + '/embeddings', headers=self._headers(api_key), json=payload)
+            if r.status_code == 400:
+                msg = self._error_message(r)
+                if 'input_type' in msg.lower() and 'required' in msg.lower():
+                    payload = {**payload, 'input_type': 'query'}
+                    r = self.client.post(self._v1() + '/embeddings', headers=self._headers(api_key), json=payload)
         except httpx.TimeoutException:
             return SmokeResult(False, None, 'TIMEOUT', 'request timed out', True, latency_ms=(time.perf_counter()-t)*1000)
         except httpx.RequestError as e:
