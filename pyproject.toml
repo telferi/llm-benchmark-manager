@@ -4,12 +4,22 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llm-benchmark-manager"
-version = "0.2.0"
+version = "0.3.0"
 description = "Provider-agnostic LLM discovery, stability testing and AIPerf benchmarking"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
+keywords = ["llm", "benchmark", "aiperf", "mcp", "openai-compatible"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Testing",
+]
 dependencies = [
+  "aiperf==0.12.0",
   "httpx>=0.28,<1",
   "pydantic>=2.11,<3",
   "fastapi>=0.141,<1",

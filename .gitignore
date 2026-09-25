@@ -11,3 +11,5 @@ build/
 *.sqlite3
 .env
 artifacts/
+
+docs/superpowers/

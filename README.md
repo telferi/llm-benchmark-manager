@@ -1,227 +1,430 @@
 # LLM Benchmark Manager
 
-A standalone, provider-agnostic tool for discovering LLM models, screening them for basic reliability, benchmarking healthy models with NVIDIA AIPerf, and preserving historical results in SQLite.
+[English](README.md) | [Magyar](README.hu.md)
 
-The same core is exposed through:
+LLM Benchmark Manager is a standalone, open-source tool for discovering models exposed by an LLM provider, validating that they can actually be called, classifying their capabilities and health, benchmarking compatible text-generation models with NVIDIA AIPerf, and preserving historical evidence in SQLite.
 
-- an interactive and automation-friendly CLI;
-- a REST API;
-- an MCP server for AI/agent clients such as Hermes or ChatGPT.
+It is intentionally independent of any agent framework, operating-system user, host name, directory layout, or routing system. It can be used manually from a terminal, automated through a REST API, or controlled by an AI/agent through MCP.
 
-It is intentionally independent of any one agent or routing system.
+## What it does
+
+A normal full run performs the following pipeline:
+
+1. discover the provider model catalog;
+2. create a persistent progress row for every selected model;
+3. detect or infer the model capability;
+4. run a capability-aware smoke probe;
+5. perform bounded stability checks and retry transient provider failures;
+6. run AIPerf only when the model has a compatible benchmark profile;
+7. classify the model (`ACTIVE`, `UNSTABLE`, `NOT_AVAILABLE`, etc.);
+8. store metrics, normalized errors, progress and status history in SQLite.
+
+The tool never deletes historical benchmark evidence when a model changes state later.
+
+## Release status
+
+Current release candidate: **0.3.0**.
+
+The project is prepared for a future public GitHub/PyPI release, but publication is a separate step. From a source checkout or built wheel it is already installable with `pipx` or `pip`.
 
 ## Requirements
 
 - Python 3.11+
-- AIPerf for performance benchmark runs (discovery and inventory functions work without it)
+- Internet/network access to the provider being tested
+- Provider credentials for providers that require authentication
 
-The project is tested with AIPerf 0.12.0. Set `LLMBENCH_AIPERF` if the executable is not on `PATH`.
+**NVIDIA AIPerf 0.12.0 is a required package dependency.** Installing LLM Benchmark Manager installs AIPerf automatically. You do not need to install AIPerf separately.
 
-## Install
+AIPerf is currently used by the built-in `CHAT_TEXT` baseline profile. Discovery, capability detection and non-text probes still use the same installed application even when no AIPerf benchmark is applicable to a particular model.
 
-Primary installation:
+## Installation
+
+### From a source checkout
+
+Recommended for the current release candidate:
+
+```bash
+pipx install .
+llmbench --help
+```
+
+For development:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e '.[dev]'
+pytest -q
+```
+
+### From a built wheel
+
+```bash
+pipx install dist/llm_benchmark_manager-0.3.0-py3-none-any.whl
+llmbench --help
+```
+
+### Future PyPI installation
+
+After the project is published to PyPI:
 
 ```bash
 pipx install llm-benchmark-manager
 ```
 
-Install AIPerf separately if performance benchmarks are needed:
+### Docker
 
 ```bash
-pipx install aiperf==0.12.0
+docker build -t llm-benchmark-manager:0.3.0 .
 ```
 
-For a local source checkout:
-
-```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -e .
-```
-
-## Credentials
-
-Interactive onboarding is intentionally simple: the user enters only the provider endpoint URL and the API key. The provider name/slug is derived automatically from the endpoint hostname. If the same endpoint already exists (for example from an earlier ENV-based setup), the existing provider is reused and its credential binding is upgraded instead of creating a duplicate.
-
-```text
-New provider
-Endpoint URL: https://integrate.api.nvidia.com
-API key: ***************
-```
-
-The raw API key is never written to SQLite. LLM Benchmark Manager first tries the operating system keyring (macOS Keychain, Windows Credential Manager, or an available Linux Secret Service backend). On headless systems where no secure OS keyring backend is available, it falls back to an encrypted local vault protected by mode-0600 files inside the application data directory.
-
-The encrypted-file fallback keeps a local master key under the same OS user account, so operating-system account isolation remains part of the trust boundary. It is intended to prevent plaintext secrets from appearing in the database, reports, logs, artifacts, or ordinary configuration files.
-
-Environment-variable credentials remain supported for automation, containers, systemd and existing Hermes-style deployments:
-
-```bash
-export NVIDIA_API_KEY='...'
-
-llmbench provider add \
-  --slug nvidia \
-  --name 'NVIDIA NIM' \
-  --url 'https://integrate.api.nvidia.com' \
-  --credential-env NVIDIA_API_KEY
-```
-
-In ENV mode the manager stores only the variable name. In all modes, AIPerf receives the provider key through its child environment, never as a command-line argument.
-
-## Interactive use
-
-Run with no arguments:
-
-```bash
-llmbench
-```
-
-The main menu offers new-provider setup, selection of an existing provider, all-provider retesting, previous results, and settings/help. New-provider setup asks only for endpoint URL and a hidden API key; provider identity is derived automatically.
-
-For an existing provider the interactive workflow supports full retest, ACTIVE-only retest, UNSTABLE/FAILED retest, refresh + NEW-only test, single-model test, and model listing.
-
-## Automation CLI
-
-```bash
-llmbench provider list
-llmbench provider discover nvidia
-llmbench run nvidia --mode full
-llmbench run nvidia --mode new
-llmbench run nvidia --mode active
-llmbench run nvidia --mode unstable_failed
-llmbench run --all --mode full
-llmbench model test nvidia nvidia/nemotron-3-super-120b-a12b
-llmbench results RUN_ID
-llmbench history nvidia MODEL_ID
-llmbench export RUN_ID --format json --output run.json
-llmbench export RUN_ID --format csv --output run.csv
-```
-
-## Model lifecycle and capabilities
-
-Models are retained historically rather than deleted when a run cannot use them. v0.2 distinguishes model health from provider/account availability and from request-shape compatibility.
-
-States are:
-
-- `NEW` — discovered but not yet evaluated;
-- `ACTIVE` — passed the appropriate supported probe and, where a matching profile exists, benchmark;
-- `UNSTABLE` — usable, but transient failures or partial benchmark errors were observed;
-- `NOT_AVAILABLE` — present in discovery but not callable with the current provider/account/endpoint. Invocation HTTP 404 belongs here and is not treated as proof that the model itself is broken;
-- `INCOMPATIBLE` — the attempted generic request shape does not match the model capability, for example text input sent to a non-text model;
-- `UNSUPPORTED` — capability is known but this release has no safe generic probe/benchmark path for it;
-- `FAILED` — a definitive non-transient failure occurred on the correct supported capability path;
-- `DISABLED` — manually excluded;
-- `MISSING` — previously known but no longer returned by discovery.
-
-Capabilities are persisted separately from status: `CHAT_TEXT`, `EMBEDDING`, `VISION`, `MULTIMODAL`, `PARSER`, `TRANSLATION`, `SAFETY`, `RERANK`, `SPECIAL`, and `UNKNOWN`. Detection prefers provider metadata, then conservative model-name hints, then probe feedback. Capability inference never by itself marks a model failed.
-
-Transient 429/503 errors use bounded 1/2/5/10 second retries. 500/502/504 and timeout/network errors use bounded 1/3 second retries. Deterministic 4xx capability/auth/availability errors are not retried with the same request. A model that succeeds only after retry is `UNSTABLE`.
-
-## Test pipeline
-
-A v0.2 full run is capability-aware:
-
-1. model discovery;
-2. capability detection and persistence;
-3. capability-specific smoke probe;
-4. bounded stability checks;
-5. capability/profile eligibility decision;
-6. AIPerf only when a compatible profile exists;
-7. final status plus append-only metrics/errors/history.
-
-`CHAT_TEXT` is eligible for the existing AIPerf `baseline-v1` profile (ISL 128, OSL 128, 10 requests, concurrency 1). `EMBEDDING` uses `/v1/embeddings` for probe validation and is not sent through the text-generation AIPerf baseline. Other specialized capabilities are retained as `UNSUPPORTED` unless an explicit safe adapter/profile exists.
-
-Valid OpenAI-compatible text responses may be read from ordinary `message.content`, structured text content, reasoning-content variants, `choices[].text`, or supported output-text variants. Usage-only/empty responses are not counted as success.
-
-## Live progress
-
-Every selected model gets a persisted `run_model_progress` row before execution. The progress denominator is therefore the number of models selected for the run; `processed` means rows that reached `DONE`, not the number of models with AIPerf result rows.
-
-Interactive CLI runs print stage transitions such as:
-
-```text
-[37/82] 45.1%  nvidia/model-id
-Capability: CHAT_TEXT
-Smoke: RUNNING
-```
-
-The final CLI summary reports `ACTIVE`, `UNSTABLE`, `NOT_AVAILABLE`, `INCOMPATIBLE`, `UNSUPPORTED`, `FAILED`, and the exact total processed.
-
-## REST API
-
-Start the local API server:
-
-```bash
-llmbench serve --host 127.0.0.1 --port 8765
-```
-
-API prefix: `/api/v1`.
-
-Key resources include providers, provider model discovery, benchmark runs, results, model history, and persisted live progress. A run request returns a `run_id`; long-running work is handled by the local job manager. Read exact progress with `GET /api/v1/runs/{run_id}/progress`.
-
-Bind to a non-loopback address only behind an authentication/network-control layer appropriate for your environment.
-
-## MCP
-
-Start an MCP stdio server:
-
-```bash
-llmbench mcp
-```
-
-The MCP surface exposes safe provider/model/run tools including discovery, run start/status/progress/cancel/results, unstable retest and NEW-model testing. `benchmark_run_progress` returns the same persisted progress summary as REST. There is deliberately no raw-secret read tool.
-
-Hermes and other agents should call this MCP/API surface instead of gaining direct access to provider credentials.
-
-## Data location
-
-Default data directory:
-
-```text
-~/.local/share/llmbench/
-```
-
-Override it with:
-
-```bash
-export LLMBENCH_DATA_DIR=/srv/llmbench
-```
-
-Contents include the SQLite database, AIPerf artifact directories, and (when OS keyring is unavailable) the encrypted credential vault. Benchmark history is append-only across reruns.
-
-## Docker
-
-Build:
-
-```bash
-docker build -t llm-benchmark-manager .
-```
-
-Example API mode:
+Example REST API mode:
 
 ```bash
 docker run --rm \
   --env-file providers.env \
   -p 8765:8765 \
   -v llmbench-data:/data \
-  llm-benchmark-manager serve --host 0.0.0.0 --port 8765
+  llm-benchmark-manager:0.3.0 serve --host 0.0.0.0 --port 8765
 ```
 
-The Docker image installs AIPerf 0.12.0 and stores application data under `/data`.
+The image stores application data under `/data`. AIPerf is installed automatically because it is a normal project dependency.
 
-## Security model
+## Quick start
 
-The application is designed so raw credentials do not enter SQLite, normal logs, REST responses, MCP responses, benchmark JSON records, or process arguments. Provider error text is sanitized before persistence: active credentials and bearer tokens are redacted, UUID-like request/function identifiers and account-like identifiers are replaced with placeholders, and stored messages are length-capped while preserving the semantic error class. Interactive secrets are stored in the OS keyring when available, with an encrypted local fallback for headless systems; ENV references remain available for automation. Provider URLs are restricted to HTTP(S) and may not embed username/password credentials.
-
-The REST API has no built-in multi-user authentication in v0.2.0. Its default CLI bind address is loopback. Use a trusted reverse proxy, network policy, or equivalent control before exposing it remotely.
-
-## Development
+Run the interactive interface:
 
 ```bash
+llmbench
+```
+
+For a new provider, enter only the provider endpoint URL and API key:
+
+```text
+New provider
+Endpoint URL: https://provider.example.com
+API key: ***************
+```
+
+The provider slug is derived from the endpoint hostname. If that normalized endpoint already exists, the existing provider record is reused rather than duplicated.
+
+For an existing provider the interactive menu supports:
+
+- full retest;
+- `ACTIVE`-only retest;
+- `UNSTABLE`/`FAILED` retest;
+- refresh discovery and test only `NEW` models;
+- test one model;
+- list known models and states.
+
+## Automation CLI
+
+```bash
+llmbench provider list
+llmbench provider discover PROVIDER
+
+llmbench run PROVIDER --mode full
+llmbench run PROVIDER --mode new
+llmbench run PROVIDER --mode active
+llmbench run PROVIDER --mode unstable_failed
+llmbench run --all --mode full
+
+llmbench model test PROVIDER MODEL_ID
+llmbench results RUN_ID
+llmbench history PROVIDER MODEL_ID
+llmbench export RUN_ID --format json --output run.json
+llmbench export RUN_ID --format csv --output run.csv
+```
+
+`PROVIDER` can be the configured provider identifier/slug accepted by the service.
+
+## Provider compatibility
+
+The built-in generic adapter targets OpenAI-compatible provider APIs and uses conventional endpoints such as:
+
+- `/v1/models`
+- `/v1/chat/completions`
+- `/v1/embeddings`
+
+Provider-specific behavior is handled conservatively. For example, asymmetric embedding models that explicitly report that `input_type` is required are retried using `input_type="query"`. Unrelated HTTP 400 errors are not blindly retried with provider-specific parameters.
+
+A provider may expose models in its catalog that are not callable for the current account or endpoint. Those models are classified separately from genuinely broken models.
+
+## Model states
+
+- `NEW` — discovered but not evaluated yet.
+- `ACTIVE` — passed its supported probe and, where applicable, compatible benchmark profile.
+- `UNSTABLE` — usable, but transient failures or partial benchmark failures were observed.
+- `NOT_AVAILABLE` — discovered, but not callable with the current provider/account/endpoint. HTTP 404 invocation responses normally map here.
+- `INCOMPATIBLE` — the attempted generic request shape does not match the model capability.
+- `UNSUPPORTED` — capability is known, but this release has no safe generic probe or benchmark path for it.
+- `FAILED` — a definitive non-transient failure occurred on the correct supported capability path.
+- `DISABLED` — manually excluded.
+- `MISSING` — previously known but no longer returned by discovery.
+
+A later retest does not rewrite the final-status summary of an earlier run.
+
+## Capabilities
+
+Capabilities are stored independently of model health:
+
+- `CHAT_TEXT`
+- `EMBEDDING`
+- `VISION`
+- `MULTIMODAL`
+- `PARSER`
+- `TRANSLATION`
+- `SAFETY`
+- `RERANK`
+- `SPECIAL`
+- `UNKNOWN`
+
+Detection is conservative and may use provider metadata, model-ID heuristics, probe feedback or an explicit manual source. Capability inference alone never marks a model as failed.
+
+## Retry and classification rules
+
+The default error policy distinguishes provider/account availability from model quality:
+
+- `401` / `403` → authentication/provider run issue; not a model failure;
+- `404` → `NOT_AVAILABLE`; no identical retry;
+- `429` → rate limited; bounded retry using 1/2/5/10 seconds or `Retry-After` when supplied;
+- `503` → overloaded; bounded retry using 1/2/5/10 seconds;
+- `500` / `502` / `504` → transient provider error; bounded retry using 1/3 seconds;
+- timeout/network failure → transient; bounded retry using 1/3 seconds;
+- capability-specific `400` mismatch → `INCOMPATIBLE`;
+- deterministic payload failure on the correct request shape → `FAILED`.
+
+A model that succeeds only after retry is classified `UNSTABLE`.
+
+## AIPerf benchmark profile
+
+The built-in `baseline-v1` profile is used for compatible `CHAT_TEXT` models:
+
+- input sequence length: 128 tokens;
+- output sequence length: 128 tokens;
+- requests: 10;
+- concurrency: 1;
+- streaming: enabled;
+- deterministic synthetic seed: 42.
+
+The provider API key is passed to AIPerf through the child-process environment, never as a command-line argument. The temporary AIPerf configuration file is removed after the run.
+
+`EMBEDDING` and other specialized capabilities are not forced through the text-generation AIPerf profile. A successful supported non-text probe may therefore finish with `SKIPPED_UNSUPPORTED_PROFILE` while the model itself is `ACTIVE`.
+
+## Progress and history
+
+Every selected model receives a `run_model_progress` record before execution. This makes progress exact even when many discovered models never reach AIPerf.
+
+Example CLI output:
+
+```text
+[37/82] 45.1%  provider/model-id
+Capability: CHAT_TEXT
+Smoke: PASS
+Stability: PASS
+AIPerf: RUNNING
+```
+
+Progress stages are:
+
+- `PENDING`
+- `CAPABILITY`
+- `SMOKE`
+- `STABILITY`
+- `BENCHMARK`
+- `DONE`
+
+A run is complete when all selected progress rows reach `DONE`.
+
+## Credentials and secret handling
+
+Interactive API keys are never stored in SQLite.
+
+Credential storage order:
+
+1. operating-system keyring when a usable backend exists;
+2. encrypted local credential vault when no usable keyring exists;
+3. environment-variable references for automation and container/system-service deployments.
+
+The encrypted fallback uses a local Fernet master key and vault under the application data directory. The key and vault are protected with restrictive file modes where the operating system supports them. The local OS account remains part of the trust boundary; this fallback is not hardware-backed secret storage.
+
+For ENV-based automation:
+
+```bash
+export PROVIDER_API_KEY='...'
+
+llmbench provider add \
+  --slug example \
+  --name 'Example Provider' \
+  --url 'https://provider.example.com' \
+  --credential-env PROVIDER_API_KEY
+```
+
+Only the environment-variable name is persisted.
+
+Provider errors are sanitized before persistence. Active secrets, bearer tokens, UUID-like request identifiers and account-like identifiers are redacted or normalized, and messages are length-capped.
+
+## Data location
+
+The default data directory is selected with `platformdirs`, so it follows the operating system/user environment instead of a hard-coded home directory.
+
+Typical locations are:
+
+- Linux: `~/.local/share/llmbench/`
+- macOS: `~/Library/Application Support/llmbench/`
+- Windows: the current user's local application-data directory under `llmbench`
+
+Override the location anywhere with:
+
+```bash
+export LLMBENCH_DATA_DIR=/path/to/llmbench-data
+```
+
+The directory contains:
+
+```text
+llmbench.db
+artifacts/
+credentials/     # only when encrypted-file fallback is used
+```
+
+No project code assumes a specific username, server name or installation directory.
+
+## AIPerf executable resolution
+
+AIPerf is a required dependency. LLM Benchmark Manager resolves the executable in this order:
+
+1. `LLMBENCH_AIPERF` explicit override;
+2. `aiperf` installed beside the Python interpreter running `llmbench` (important for `pipx` environments);
+3. `aiperf` found on `PATH`.
+
+Example override:
+
+```bash
+export LLMBENCH_AIPERF=/custom/venv/bin/aiperf
+```
+
+## REST API
+
+Start the API locally:
+
+```bash
+llmbench serve --host 127.0.0.1 --port 8765
+```
+
+Available API resources include:
+
+```text
+GET  /api/v1/providers
+POST /api/v1/providers
+GET  /api/v1/providers/{provider_id}
+POST /api/v1/providers/{provider_id}/discover
+GET  /api/v1/providers/{provider_id}/models
+
+POST /api/v1/runs
+GET  /api/v1/runs/{run_id}
+GET  /api/v1/runs/{run_id}/progress
+POST /api/v1/runs/{run_id}/cancel
+GET  /api/v1/runs/{run_id}/results
+
+GET  /api/v1/models/{model_db_id}
+GET  /api/v1/models/{model_db_id}/history
+```
+
+The REST server has no built-in multi-user authentication in 0.3.0. The default bind address is loopback. Do not expose it to an untrusted network without an authentication/network-control layer such as a trusted reverse proxy or private network.
+
+## MCP server
+
+Start the stdio MCP server:
+
+```bash
+llmbench mcp
+```
+
+The MCP surface includes:
+
+```text
+benchmark_provider_list
+benchmark_provider_get
+benchmark_provider_discover
+benchmark_model_list
+benchmark_model_get
+benchmark_model_history
+benchmark_run_start
+benchmark_run_status
+benchmark_run_progress
+benchmark_run_cancel
+benchmark_run_results
+benchmark_retest_unstable
+benchmark_test_new_models
+```
+
+There is intentionally no MCP tool that returns raw provider credentials.
+
+This allows an external agent (for example a model-management or model-design service) to request discovery and benchmarks without receiving the underlying secrets.
+
+## Exports
+
+Run data can be exported as JSON or CSV:
+
+```bash
+llmbench export RUN_ID --format json --output run.json
+llmbench export RUN_ID --format csv --output run.csv
+```
+
+The SQLite database remains the authoritative local history.
+
+## Security notes
+
+- Provider credentials are excluded from database records and normal responses.
+- AIPerf receives credentials through environment inheritance, not argv.
+- Persisted provider messages are sanitized.
+- Interactive secret input uses hidden terminal input.
+- Provider URLs may not contain embedded username/password credentials.
+- The REST service should remain private unless an external authentication layer is added.
+- Anyone who can read the encrypted fallback master key and vault as the same OS user can decrypt those credentials; use an OS keyring or external secret manager where a stronger boundary is required.
+
+See [SECURITY.md](SECURITY.md) for the disclosure and deployment policy.
+
+## Architecture
+
+The application is deliberately split into independent layers:
+
+```text
+CLI / REST / MCP
+      |
+BenchmarkService
+      |
++-----+------------------+
+|                        |
+Provider adapter       SQLite
+|                        |
+Discovery/probes      history/progress
+|
+AIPerfRunner (CHAT_TEXT baseline)
+```
+
+The benchmark manager is not a model router and does not modify a production routing system. External systems consume its evidence through CLI, REST, MCP or exported data.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details.
+
+## Development and verification
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
 pip install -e '.[dev]'
 pytest -q
 python -m build
+python -m pip check
 ```
+
+Before publishing a release, also test installation into a clean environment and verify that `llmbench --help` and `aiperf --version` are available from that environment.
+
+## Contributing
+
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md). Do not include real API keys, provider account identifiers, local databases or benchmark artifacts containing private data in issues or commits.
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).

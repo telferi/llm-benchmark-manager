@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 import re
 import time
 
+from .paths import default_data_dir
 from .db import Database
 from .domain import ModelStatus, ModelCapability, RunStatus, Provider, SmokeResult
 from .credentials import CredentialManager, sanitize_provider_message
@@ -34,7 +35,7 @@ class BenchmarkService:
         self.credentials = credential_resolver or CredentialManager()
         self.adapter_factory = adapter_factory or self._default_adapter
         self.benchmark_runner = benchmark_runner or AIPerfRunner()
-        self.artifact_root = Path(artifact_root or Path.home() / '.local/share/llmbench/artifacts')
+        self.artifact_root = Path(artifact_root) if artifact_root is not None else default_data_dir() / 'artifacts'
         self.stability_checks = max(0, int(stability_checks))
         self.retry_delays_override = None if retry_delays is None else tuple(retry_delays)
         self.sleep_fn = sleep_fn or time.sleep

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
-from platformdirs import user_data_path
+from .paths import default_data_dir
 
 try:
     import keyring as _keyring
@@ -130,7 +130,7 @@ class SecureCredentialStore:
 
     def __init__(self, keyring_module: Any = None, fallback: EncryptedFileCredentialStore | None = None):
         self.keyring = _keyring if keyring_module is None else keyring_module
-        default_root = user_data_path("llmbench") / "credentials"
+        default_root = default_data_dir() / "credentials"
         self.fallback = fallback or EncryptedFileCredentialStore(default_root)
 
     def _keyring_usable(self) -> bool:
@@ -189,7 +189,7 @@ class SecureCredentialStore:
 class CredentialManager:
     def __init__(self, secure_store: SecureCredentialStore | None = None, env_resolver: EnvCredentialResolver | None = None, data_dir: str | Path | None = None):
         if secure_store is None:
-            root = Path(data_dir) if data_dir is not None else user_data_path("llmbench") / "credentials"
+            root = Path(data_dir) if data_dir is not None else default_data_dir() / "credentials"
             secure_store = SecureCredentialStore(fallback=EncryptedFileCredentialStore(root))
         self.secure = secure_store
         self.env = env_resolver or EnvCredentialResolver()
