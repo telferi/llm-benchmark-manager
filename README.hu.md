@@ -23,7 +23,7 @@ Egy későbbi újrateszt nem írja át egy korábbi futás történeti végálla
 
 ## Kiadási állapot
 
-Aktuális kiadás: **0.3.0**.
+Aktuális kiadás: **0.3.1**.
 
 A forráskód nyilvánosan elérhető GitHubon. A kiadási csomagok a GitHub `v*.*.*` release-tag workflow-jából kerülnek PyPI-ra PyPI Trusted Publishing használatával, ezért nincs szükség hosszú élettartamú PyPI API token tárolására a repositoryban.
 
@@ -41,7 +41,7 @@ A beépített AIPerf profil jelenleg a `CHAT_TEXT` modelleket méri. A discovery
 
 ### Forráskódból
 
-A jelenlegi release candidate-hez ez az ajánlott:
+A jelenlegi kiadáshoz ez az ajánlott:
 
 ```bash
 pipx install .
@@ -60,13 +60,11 @@ pytest -q
 ### Elkészített wheelből
 
 ```bash
-pipx install dist/llm_benchmark_manager-0.3.0-py3-none-any.whl
+pipx install dist/llm_benchmark_manager-0.3.1-py3-none-any.whl
 llmbench --help
 ```
 
-### Későbbi PyPI telepítés
-
-Ha a projekt felkerül PyPI-ra:
+### PyPI-ról
 
 ```bash
 pipx install llm-benchmark-manager
@@ -75,7 +73,7 @@ pipx install llm-benchmark-manager
 ### Docker
 
 ```bash
-docker build -t llm-benchmark-manager:0.3.0 .
+docker build -t llm-benchmark-manager:0.3.1 .
 ```
 
 REST API példa:
@@ -85,7 +83,7 @@ docker run --rm \
   --env-file providers.env \
   -p 8765:8765 \
   -v llmbench-data:/data \
-  llm-benchmark-manager:0.3.0 serve --host 0.0.0.0 --port 8765
+  llm-benchmark-manager:0.3.1 serve --host 0.0.0.0 --port 8765
 ```
 
 A konténer az alkalmazás adatait `/data` alatt tárolja. Az AIPerf automatikusan bekerül a képbe, mert normál projektfüggőség.
@@ -331,7 +329,7 @@ GET  /api/v1/models/{model_db_id}
 GET  /api/v1/models/{model_db_id}/history
 ```
 
-A 0.3.0 REST API-nak nincs beépített multi-user authentication rétege. Az alapértelmezett bind loopback. Megbízhatatlan hálózatra csak külön authentication/network-control réteg mögött szabad kitenni.
+A 0.3.1 REST API-nak nincs beépített multi-user authentication rétege. Az alapértelmezett bind loopback. Megbízhatatlan hálózatra csak külön authentication/network-control réteg mögött szabad kitenni.
 
 ## MCP szerver
 

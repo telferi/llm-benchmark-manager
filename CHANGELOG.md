@@ -2,6 +2,13 @@
 
 All notable user-facing changes are documented here.
 
+## 0.3.1 - 2026-09-25
+
+### Fixed
+
+- AIPerf executable discovery now falls back to the standard Python user scripts directory (for example `~/.local/bin` on Linux) when a `pip install --user` places `aiperf` outside `PATH`.
+- Release documentation now describes the already-published PyPI installation path instead of referring to a future release candidate.
+
 ## 0.3.0 - 2026-09-25
 
 ### Added

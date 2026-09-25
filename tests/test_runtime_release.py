@@ -1,3 +1,5 @@
+import os
+import sysconfig
 import types
 import tomllib
 from pathlib import Path
@@ -40,10 +42,10 @@ def test_release_declares_aiperf_as_required_dependency():
     assert "aiperf==0.12.0" in data["project"]["dependencies"]
 
 
-def test_release_version_is_030_and_metadata_matches_package():
+def test_release_version_is_031_and_metadata_matches_package():
     import llmbench
     data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
-    assert llmbench.__version__ == "0.3.0"
+    assert llmbench.__version__ == "0.3.1"
     assert data["project"]["version"] == llmbench.__version__
 
 
@@ -72,4 +74,26 @@ def test_aiperf_resolution_keeps_virtualenv_bin_when_python_is_symlink(monkeypat
     monkeypatch.setattr(paths, "sys", types.SimpleNamespace(executable=str(venv_python)))
     monkeypatch.setenv("PATH", "")
     monkeypatch.delenv("LLMBENCH_AIPERF", raising=False)
+    assert paths.resolve_aiperf_executable() == str(aiperf)
+
+
+def test_aiperf_resolution_falls_back_to_user_scripts_dir(monkeypatch, tmp_path):
+    userbase = tmp_path / "userbase"
+    scheme = sysconfig.get_preferred_scheme("user")
+    scripts = Path(sysconfig.get_path("scripts", scheme=scheme, vars={"userbase": str(userbase)}))
+    scripts.mkdir(parents=True)
+    executable = "aiperf.exe" if os.name == "nt" else "aiperf"
+    aiperf = scripts / executable
+    aiperf.write_text("#!/bin/sh\n")
+    aiperf.chmod(0o755)
+
+    python = tmp_path / "system" / "python3"
+    python.parent.mkdir(parents=True)
+    python.write_text("")
+
+    monkeypatch.setattr(paths, "sys", types.SimpleNamespace(executable=str(python)))
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setenv("PYTHONUSERBASE", str(userbase))
+    monkeypatch.delenv("LLMBENCH_AIPERF", raising=False)
+
     assert paths.resolve_aiperf_executable() == str(aiperf)

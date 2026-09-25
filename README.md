@@ -23,7 +23,7 @@ The tool never deletes historical benchmark evidence when a model changes state 
 
 ## Release status
 
-Current release: **0.3.0**.
+Current release: **0.3.1**.
 
 The source repository is public on GitHub. Release artifacts are published to PyPI from the GitHub `v*.*.*` release-tag workflow using PyPI Trusted Publishing, so no long-lived PyPI API token is stored in the repository.
 
@@ -41,7 +41,7 @@ AIPerf is currently used by the built-in `CHAT_TEXT` baseline profile. Discovery
 
 ### From a source checkout
 
-Recommended for the current release candidate:
+Recommended for the current release:
 
 ```bash
 pipx install .
@@ -60,13 +60,11 @@ pytest -q
 ### From a built wheel
 
 ```bash
-pipx install dist/llm_benchmark_manager-0.3.0-py3-none-any.whl
+pipx install dist/llm_benchmark_manager-0.3.1-py3-none-any.whl
 llmbench --help
 ```
 
-### Future PyPI installation
-
-After the project is published to PyPI:
+### From PyPI
 
 ```bash
 pipx install llm-benchmark-manager
@@ -75,7 +73,7 @@ pipx install llm-benchmark-manager
 ### Docker
 
 ```bash
-docker build -t llm-benchmark-manager:0.3.0 .
+docker build -t llm-benchmark-manager:0.3.1 .
 ```
 
 Example REST API mode:
@@ -85,7 +83,7 @@ docker run --rm \
   --env-file providers.env \
   -p 8765:8765 \
   -v llmbench-data:/data \
-  llm-benchmark-manager:0.3.0 serve --host 0.0.0.0 --port 8765
+  llm-benchmark-manager:0.3.1 serve --host 0.0.0.0 --port 8765
 ```
 
 The image stores application data under `/data`. AIPerf is installed automatically because it is a normal project dependency.
@@ -331,7 +329,7 @@ GET  /api/v1/models/{model_db_id}
 GET  /api/v1/models/{model_db_id}/history
 ```
 
-The REST server has no built-in multi-user authentication in 0.3.0. The default bind address is loopback. Do not expose it to an untrusted network without an authentication/network-control layer such as a trusted reverse proxy or private network.
+The REST server has no built-in multi-user authentication in 0.3.1. The default bind address is loopback. Do not expose it to an untrusted network without an authentication/network-control layer such as a trusted reverse proxy or private network.
 
 ## MCP server
 

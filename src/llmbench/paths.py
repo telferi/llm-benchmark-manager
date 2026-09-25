@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import shutil
+import site
 import sys
+import sysconfig
 from pathlib import Path
 
 from platformdirs import user_data_path
@@ -31,5 +33,16 @@ def resolve_aiperf_executable() -> str:
     if sibling.is_file():
         return str(sibling)
 
-    found = shutil.which("aiperf")
-    return found or "aiperf"
+    found = shutil.which(name)
+    if found:
+        return found
+
+    userbase = os.environ.get("PYTHONUSERBASE") or site.getuserbase()
+    if userbase:
+        scheme = sysconfig.get_preferred_scheme("user")
+        scripts = Path(sysconfig.get_path("scripts", scheme=scheme, vars={"userbase": userbase}))
+        user_executable = scripts / name
+        if user_executable.is_file():
+            return str(user_executable)
+
+    return name
