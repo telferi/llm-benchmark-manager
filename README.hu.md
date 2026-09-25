@@ -23,9 +23,9 @@ Egy későbbi újrateszt nem írja át egy korábbi futás történeti végálla
 
 ## Kiadási állapot
 
-Aktuális release candidate: **0.3.0**.
+Aktuális kiadás: **0.3.0**.
 
-A projekt elő van készítve későbbi nyilvános GitHub/PyPI publikálásra. A publikálás külön lépés; forráskódból és elkészített wheelből már most is telepíthető `pipx` vagy `pip` segítségével.
+A forráskód nyilvánosan elérhető GitHubon. A kiadási csomagok a GitHub `v*.*.*` release-tag workflow-jából kerülnek PyPI-ra PyPI Trusted Publishing használatával, ezért nincs szükség hosszú élettartamú PyPI API token tárolására a repositoryban.
 
 ## Követelmények
 

@@ -23,9 +23,9 @@ The tool never deletes historical benchmark evidence when a model changes state 
 
 ## Release status
 
-Current release candidate: **0.3.0**.
+Current release: **0.3.0**.
 
-The project is prepared for a future public GitHub/PyPI release, but publication is a separate step. From a source checkout or built wheel it is already installable with `pipx` or `pip`.
+The source repository is public on GitHub. Release artifacts are published to PyPI from the GitHub `v*.*.*` release-tag workflow using PyPI Trusted Publishing, so no long-lived PyPI API token is stored in the repository.
 
 ## Requirements
 

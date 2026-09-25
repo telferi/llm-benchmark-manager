@@ -31,6 +31,12 @@ dependencies = [
   "platformdirs>=4,<5",
 ]
 
+[project.urls]
+Homepage = "https://github.com/telferi/llm-benchmark-manager"
+Repository = "https://github.com/telferi/llm-benchmark-manager"
+Issues = "https://github.com/telferi/llm-benchmark-manager/issues"
+Changelog = "https://github.com/telferi/llm-benchmark-manager/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
 dev = ["pytest>=8,<9", "build>=1,<2"]
 
