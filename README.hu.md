@@ -70,6 +70,33 @@ llmbench --help
 pipx install llm-benchmark-manager
 ```
 
+### A CLI indítása
+
+Ha a `llmbench` már szerepel a `PATH`-ban, az interaktív felület így indítható:
+
+```bash
+llmbench
+```
+
+Ha a csomagot `python3 -m pip install --user ...` paranccsal telepítetted, és a shell azt jelzi, hogy a `~/.local/bin` nincs benne a `PATH`-ban, közvetlenül így indíthatod:
+
+```bash
+"$HOME/.local/bin/llmbench"
+```
+
+Ha azt szeretnéd, hogy a későbbi Bash munkamenetekben elég legyen a `llmbench` parancs, egyszer add hozzá a felhasználói bináris könyvtárat a `PATH`-hoz:
+
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+Ezután egyszerűen így indítható:
+
+```bash
+llmbench
+```
+
 ### Docker
 
 ```bash

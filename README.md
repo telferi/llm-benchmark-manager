@@ -70,6 +70,33 @@ llmbench --help
 pipx install llm-benchmark-manager
 ```
 
+### Run the CLI
+
+If `llmbench` is already on your `PATH`, start the interactive interface with:
+
+```bash
+llmbench
+```
+
+If you installed the package with `python3 -m pip install --user ...` and your shell reports that `~/.local/bin` is not on `PATH`, you can start it directly with:
+
+```bash
+"$HOME/.local/bin/llmbench"
+```
+
+To make `llmbench` available as a normal command in future Bash sessions, add the user binary directory to `PATH` once:
+
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+After that, start it simply with:
+
+```bash
+llmbench
+```
+
 ### Docker
 
 ```bash
