@@ -23,7 +23,7 @@ The tool never deletes historical benchmark evidence when a model changes state 
 
 ## Release status
 
-Current release: **0.3.1**.
+Current release: **0.3.2**.
 
 The source repository is public on GitHub. Release artifacts are published to PyPI from the GitHub `v*.*.*` release-tag workflow using PyPI Trusted Publishing, so no long-lived PyPI API token is stored in the repository.
 
@@ -34,6 +34,8 @@ The source repository is public on GitHub. Release artifacts are published to Py
 - Provider credentials for providers that require authentication
 
 **NVIDIA AIPerf 0.12.0 is a required package dependency.** Installing LLM Benchmark Manager installs AIPerf automatically. You do not need to install AIPerf separately.
+
+Release 0.3.2 also constrains NumPy to `numpy>=1.26.4,<2.4` for compatibility with older or virtualized x86_64 CPUs. This is based on a verified QEMU compatibility case where NumPy 2.5.3 failed at startup because its wheel required the `X86_V2` baseline, while NumPy 2.3.5 imported successfully and AIPerf 0.12.0 completed a real benchmark run.
 
 AIPerf is currently used by the built-in `CHAT_TEXT` baseline profile. Discovery, capability detection and non-text probes still use the same installed application even when no AIPerf benchmark is applicable to a particular model.
 
@@ -60,7 +62,7 @@ pytest -q
 ### From a built wheel
 
 ```bash
-pipx install dist/llm_benchmark_manager-0.3.1-py3-none-any.whl
+pipx install dist/llm_benchmark_manager-0.3.2-py3-none-any.whl
 llmbench --help
 ```
 
@@ -100,7 +102,7 @@ llmbench
 ### Docker
 
 ```bash
-docker build -t llm-benchmark-manager:0.3.1 .
+docker build -t llm-benchmark-manager:0.3.2 .
 ```
 
 Example REST API mode:
@@ -110,7 +112,7 @@ docker run --rm \
   --env-file providers.env \
   -p 8765:8765 \
   -v llmbench-data:/data \
-  llm-benchmark-manager:0.3.1 serve --host 0.0.0.0 --port 8765
+  llm-benchmark-manager:0.3.2 serve --host 0.0.0.0 --port 8765
 ```
 
 The image stores application data under `/data`. AIPerf is installed automatically because it is a normal project dependency.
@@ -356,7 +358,7 @@ GET  /api/v1/models/{model_db_id}
 GET  /api/v1/models/{model_db_id}/history
 ```
 
-The REST server has no built-in multi-user authentication in 0.3.1. The default bind address is loopback. Do not expose it to an untrusted network without an authentication/network-control layer such as a trusted reverse proxy or private network.
+The REST server has no built-in multi-user authentication in 0.3.2. The default bind address is loopback. Do not expose it to an untrusted network without an authentication/network-control layer such as a trusted reverse proxy or private network.
 
 ## MCP server
 

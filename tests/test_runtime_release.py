@@ -42,10 +42,15 @@ def test_release_declares_aiperf_as_required_dependency():
     assert "aiperf==0.12.0" in data["project"]["dependencies"]
 
 
-def test_release_version_is_031_and_metadata_matches_package():
+def test_release_pins_numpy_below_x86_v2_baseline_change():
+    data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    assert "numpy>=1.26.4,<2.4" in data["project"]["dependencies"]
+
+
+def test_release_version_is_032_and_metadata_matches_package():
     import llmbench
     data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
-    assert llmbench.__version__ == "0.3.1"
+    assert llmbench.__version__ == "0.3.2"
     assert data["project"]["version"] == llmbench.__version__
 
 

@@ -2,6 +2,13 @@
 
 All notable user-facing changes are documented here.
 
+## 0.3.2 - 2026-09-25
+
+### Fixed
+
+- Added an explicit `numpy>=1.26.4,<2.4` dependency constraint so AIPerf 0.12.0 remains usable on older or virtualized x86_64 CPUs where newer NumPy wheels can fail with an `X86_V2` baseline requirement.
+- Documented the verified QEMU/NumPy compatibility case in both English and Hungarian installation requirements.
+
 ## 0.3.1 - 2026-09-25
 
 ### Fixed

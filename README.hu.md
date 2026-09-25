@@ -23,7 +23,7 @@ Egy későbbi újrateszt nem írja át egy korábbi futás történeti végálla
 
 ## Kiadási állapot
 
-Aktuális kiadás: **0.3.1**.
+Aktuális kiadás: **0.3.2**.
 
 A forráskód nyilvánosan elérhető GitHubon. A kiadási csomagok a GitHub `v*.*.*` release-tag workflow-jából kerülnek PyPI-ra PyPI Trusted Publishing használatával, ezért nincs szükség hosszú élettartamú PyPI API token tárolására a repositoryban.
 
@@ -34,6 +34,8 @@ A forráskód nyilvánosan elérhető GitHubon. A kiadási csomagok a GitHub `v*
 - provider credential, ahol hitelesítés szükséges
 
 **Az NVIDIA AIPerf 0.12.0 kötelező csomagfüggőség.** Az LLM Benchmark Manager telepítése automatikusan telepíti az AIPerfet is; külön AIPerf telepítés nem szükséges.
+
+A 0.3.2 kiadás a NumPy verzióját is `numpy>=1.26.4,<2.4` tartományra korlátozza a régebbi vagy virtualizált x86_64 CPU-k kompatibilitása érdekében. Ezt egy valós QEMU kompatibilitási teszt igazolta: a NumPy 2.5.3 induláskor `X86_V2` baseline-követelmény miatt leállt, míg a NumPy 2.3.5 sikeresen importálódott, és az AIPerf 0.12.0 tényleges benchmark futást hajtott végre.
 
 A beépített AIPerf profil jelenleg a `CHAT_TEXT` modelleket méri. A discovery, capability detection és a nem szöveges probe-ok ugyanebben a telepített alkalmazásban működnek akkor is, ha egy adott modellhez nincs alkalmazható AIPerf profil.
 
@@ -60,7 +62,7 @@ pytest -q
 ### Elkészített wheelből
 
 ```bash
-pipx install dist/llm_benchmark_manager-0.3.1-py3-none-any.whl
+pipx install dist/llm_benchmark_manager-0.3.2-py3-none-any.whl
 llmbench --help
 ```
 
@@ -100,7 +102,7 @@ llmbench
 ### Docker
 
 ```bash
-docker build -t llm-benchmark-manager:0.3.1 .
+docker build -t llm-benchmark-manager:0.3.2 .
 ```
 
 REST API példa:
@@ -110,7 +112,7 @@ docker run --rm \
   --env-file providers.env \
   -p 8765:8765 \
   -v llmbench-data:/data \
-  llm-benchmark-manager:0.3.1 serve --host 0.0.0.0 --port 8765
+  llm-benchmark-manager:0.3.2 serve --host 0.0.0.0 --port 8765
 ```
 
 A konténer az alkalmazás adatait `/data` alatt tárolja. Az AIPerf automatikusan bekerül a képbe, mert normál projektfüggőség.
@@ -356,7 +358,7 @@ GET  /api/v1/models/{model_db_id}
 GET  /api/v1/models/{model_db_id}/history
 ```
 
-A 0.3.1 REST API-nak nincs beépített multi-user authentication rétege. Az alapértelmezett bind loopback. Megbízhatatlan hálózatra csak külön authentication/network-control réteg mögött szabad kitenni.
+A 0.3.2 REST API-nak nincs beépített multi-user authentication rétege. Az alapértelmezett bind loopback. Megbízhatatlan hálózatra csak külön authentication/network-control réteg mögött szabad kitenni.
 
 ## MCP szerver
 
